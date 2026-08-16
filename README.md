@@ -47,6 +47,8 @@ Try SpendWise AI here:
 SpendWise-AI/
 ├── .streamlit/
 │   └── secrets.toml
+├── LICENSE
+├── LICENSE-MIT-v1.0
 ├── .gitignore
 ├── ai.py
 ├── analytics.py
@@ -128,8 +130,30 @@ Users can export monthly expense data as:
 
 ## 📌 Version
 
-**SpendWise AI v1.0**
+**SpendWise AI v1.0.0**
 
 ## 👨‍💻 Author
 
 **Syed Saifuddin**
+
+## 📜 License
+
+SpendWise AI is licensed under the **PolyForm Noncommercial License 1.0.0**.
+
+You are welcome to:
+
+- ✅ View and download the source code
+- ✅ Fork and modify the project
+- ✅ Experiment with it and use it for learning
+- ✅ Run modified versions locally
+- ✅ Host modified versions for noncommercial purposes
+
+You may not:
+
+- ❌ Use SpendWise AI for commercial purposes
+- ❌ Sell or monetize SpendWise AI or modified versions of it
+- ❌ Remove the required copyright and license notices
+
+For the complete licensing terms, see the [LICENSE](LICENSE) file.
+
+> **Note:** SpendWise AI v1.0.0 was originally released under the MIT License. See [LICENSE-MIT-v1.0](LICENSE-MIT-v1.0) for the license applicable to that release.
