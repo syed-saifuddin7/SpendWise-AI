@@ -6,6 +6,12 @@ with Streamlit, SQLite, and Google Gemini.
 It helps users track expenses, manage monthly budgets, analyze spending
 patterns, generate reports, and receive AI-powered financial insights.
 
+## 🌐 Live Demo
+
+Try SpendWise AI here:
+
+[Open SpendWise AI](https://spend-wiseai.streamlit.app/)
+
 ## ✨ Features
 
 -   Add, edit, and delete expenses
