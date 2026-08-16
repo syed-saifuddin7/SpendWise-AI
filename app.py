@@ -147,19 +147,20 @@ st.markdown("""
 
     .transaction-header {
         display: grid;
-        grid-template-columns: 3fr 2fr 2fr 2fr 2fr;
+        grid-template-columns: 3fr 2.4fr 1.7fr 2.2fr 1.6fr;
         align-items: center;
 
-        padding: 10px 14px;
-        margin-bottom: 12px;
+        padding: 6px 0px;
+        margin-bottom: 4px;
 
-        border: 1px solid #3a3f4b;
-        border-radius: 10px;
-        background: #11151d;
+        border: none;
+        border-radius: 0;
+        background: transparent;
 
         font-weight: 700;
         font-size: 14px;
     }
+
     .transaction-header div {
         padding: 2px 0;
     }
@@ -209,6 +210,44 @@ st.markdown("""
         font-size: 12px;
         padding: 9px 10px;
     }
+
+    /* =========================
+       PHONE TRANSACTIONS — <= 768px
+       Keep each transaction on one compact row.
+       Edit and Delete use separate top-level columns so the buttons
+       remain visible and never overlap on phone widths.
+    ========================= */
+    @media (max-width: 768px) {
+        .transaction-header {
+            display: none !important;
+        }
+
+        .st-key-transactions_table div[data-testid="stHorizontalBlock"] {
+            flex-wrap: nowrap !important;
+            gap: 0.22rem !important;
+            align-items: center !important;
+        }
+
+        .st-key-transactions_table div[data-testid="stColumn"] {
+            min-width: 0 !important;
+            width: auto !important;
+        }
+
+        .st-key-transactions_table
+        div[data-testid="stMarkdownContainer"] p {
+            font-size: 11px !important;
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+        }
+
+        .st-key-transactions_table
+        div[data-testid="stButton"] button {
+            width: 34px !important;
+            min-width: 34px !important;
+            height: 34px !important;
+            padding: 0 !important;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -912,9 +951,9 @@ st.markdown("""
 <div class="transaction-header">
     <div>EXPENSE</div>
     <div>CATEGORY</div>
-    <div style="padding-left: 25px;">AMOUNT</div>
-    <div style="padding-left: 28px;">DATE</div>
-    <div style="padding-left: 32px;">ACTIONS</div>
+    <div>AMOUNT</div>
+    <div>DATE</div>
+    <div>ACTIONS</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -929,8 +968,8 @@ with st.container(key="transactions_table"):
     else:
         for expense in filtered_expenses:
 
-            col1, col2, col3, col4, action_col = st.columns(
-            [3, 2.4, 1.7, 2.2, 1.7]
+            col1, col2, col3, col4, edit_col, delete_col = st.columns(
+                [3, 2.4, 1.7, 2.2, 0.85, 0.85]
             )
 
             with col1:
@@ -938,9 +977,9 @@ with st.container(key="transactions_table"):
 
             with col2:
                 st.write(
-                f'{category_icons.get(expense["category"], "📦")} '
-                f'{expense["category"]}'
-            )
+                    f'{category_icons.get(expense["category"], "📦")} '
+                    f'{expense["category"]}'
+                )
 
             with col3:
                 st.write(f"₹{expense['amount']:.2f}")
@@ -952,28 +991,23 @@ with st.container(key="transactions_table"):
 
                 st.write(formatted_date)
 
-            with action_col:
-            
-                edit_col, delete_col = st.columns(2)
+            with edit_col:
+                if st.button(
+                    "✏️",
+                    key=f'edit_{expense["id"]}',
+                    help="Edit expense"
+                ):
+                    st.session_state.editing_id = expense["id"]
+                    st.rerun()
 
-                with edit_col:
-                    if st.button(
-                        "✏️",
-                        key=f'edit_{expense["id"]}',
-                        help="Edit expense"
-                    ):
-                        st.session_state.editing_id = expense["id"]
-                        st.rerun()
-
-                with delete_col:
-                    if st.button(
-                        "🗑️",
-                        key=f'delete_{expense["id"]}',
-                        help="Delete expense"
-                    ):
-                        delete_expense(expense["id"])
-                        st.rerun()
-
+            with delete_col:
+                if st.button(
+                    "🗑️",
+                    key=f'delete_{expense["id"]}',
+                    help="Delete expense"
+                ):
+                    delete_expense(expense["id"])
+                    st.rerun()
 
 # -------------------------
 # EDIT EXPENSE
