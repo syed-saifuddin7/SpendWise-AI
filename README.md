@@ -49,7 +49,6 @@ SpendWise-AI/
 ├── monthly_summary.py
 ├── reports.py
 ├── requirements.txt
-└── spendwise.db
 ```
 
 ## 🚀 Installation
