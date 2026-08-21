@@ -4,3 +4,4 @@ streamlit
 google-genai
 reportlab
 python-dateutil
+supabase
