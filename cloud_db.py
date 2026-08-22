@@ -5,7 +5,7 @@ from supabase_client import get_supabase_client
 # EXPENSES
 # -------------------------
 
-def add_expense(user_id, name, amount, category, date, description):
+def add_expense(user_id,name,amount,category,date,description,category_id=None):
     supabase = get_supabase_client()
 
     data = {
@@ -14,7 +14,8 @@ def add_expense(user_id, name, amount, category, date, description):
         "amount": float(amount),
         "category": category,
         "date": str(date),
-        "description": description
+        "description": description,
+        "category_id": category_id
     }
 
     response = (
@@ -25,7 +26,6 @@ def add_expense(user_id, name, amount, category, date, description):
     )
 
     return response.data
-
 
 def get_expenses(user_id):
     supabase = get_supabase_client()
@@ -41,7 +41,6 @@ def get_expenses(user_id):
 
     return response.data
 
-
 def update_expense(
     user_id,
     expense_id,
@@ -49,7 +48,8 @@ def update_expense(
     amount,
     category,
     date,
-    description
+    description,
+    category_id=None
 ):
     supabase = get_supabase_client()
 
@@ -58,7 +58,8 @@ def update_expense(
         "amount": float(amount),
         "category": category,
         "date": str(date),
-        "description": description
+        "description": description,
+        "category_id": category_id
     }
 
     response = (
@@ -71,7 +72,6 @@ def update_expense(
     )
 
     return response.data
-
 
 def delete_expense(user_id, expense_id):
     supabase = get_supabase_client()
@@ -185,6 +185,98 @@ def clear_chat_history(user_id):
         supabase
         .table("chat_history")
         .delete()
+        .eq("user_id", user_id)
+        .execute()
+    )
+
+    return response.data
+
+# -------------------------
+# CUSTOM CATEGORIES
+# -------------------------
+
+def add_category(user_id, name, emoji=None):
+    supabase = get_supabase_client()
+
+    data = {
+        "user_id": user_id,
+        "name": name.strip(),
+        "emoji": emoji.strip() if emoji else None
+    }
+
+    response = (
+        supabase
+        .table("categories")
+        .insert(data)
+        .execute()
+    )
+
+    return response.data
+
+
+def get_categories(user_id):
+    supabase = get_supabase_client()
+
+    response = (
+        supabase
+        .table("categories")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("name")
+        .execute()
+    )
+
+    return response.data
+
+
+def update_category(user_id, category_id, name, emoji=None):
+    supabase = get_supabase_client()
+
+    clean_name = name.strip()
+
+    # Update the actual category
+    response = (
+        supabase
+        .table("categories")
+        .update({
+            "name": clean_name,
+            "emoji": emoji.strip() if emoji else None
+        })
+        .eq("id", category_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+
+    # Keep existing expenses synchronized with the renamed category
+    supabase.table("expenses").update({
+        "category": clean_name
+    }).eq(
+        "category_id", category_id
+    ).eq(
+        "user_id", user_id
+    ).execute()
+
+    return response.data
+
+def delete_category(user_id, category_id):
+    supabase = get_supabase_client()
+
+    # Move expenses using this custom category to built-in "Other"
+    supabase.table("expenses").update({
+        "category": "Other",
+        "category_id": None
+    }).eq(
+        "category_id", category_id
+    ).eq(
+        "user_id", user_id
+    ).execute()
+
+    # Delete the custom category
+    response = (
+        supabase
+        .table("categories")
+        .delete()
+        .eq("id", category_id)
         .eq("user_id", user_id)
         .execute()
     )

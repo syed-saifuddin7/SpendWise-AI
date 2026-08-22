@@ -20,3 +20,5 @@ Thumbs.db
 
 # Local SpendWise database
 spendwise.db
+
+.env

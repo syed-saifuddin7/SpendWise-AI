@@ -1,6 +1,5 @@
 import streamlit as st
-from db import (
-    create_database,
+from cloud_db import (
     add_expense,
     get_expenses,
     update_expense,
@@ -9,6 +8,10 @@ from db import (
     get_budget,
     add_chat_message,
     get_chat_history,
+    get_categories,
+    add_category,
+    update_category,
+    delete_category,
     clear_chat_history
 )
 from datetime import date
@@ -16,38 +19,91 @@ from ai import ask_ai
 from monthly_summary import render_monthly_summary
 from reports import render_reports
 from analytics import render_analytics
-
-create_database()
-
-# Load all expenses from SQLite
-expenses = get_expenses()
-
-current_month = date.today().strftime("%Y-%m")
-monthly_expenses = [
-    expense
-    for expense in expenses
-    if expense["date"].startswith(current_month)
-]
-monthly_budget = get_budget(current_month)
-
-# We only keep UI state in Session State.
-# The actual expense data now comes from SQLite.
-if "editing_id" not in st.session_state:
-    st.session_state.editing_id = None
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = get_chat_history()
-if "ai_insights" not in st.session_state:
-    st.session_state.ai_insights = None
-if "ai_recommendations" not in st.session_state:
-    st.session_state.ai_recommendations = None
-if "chat_open" not in st.session_state:
-    st.session_state.chat_open = False
+from auth import is_logged_in, sign_out
+from auth_ui import render_login, render_signup
+from supabase_client import get_supabase_client
 
 st.set_page_config(
     page_title="SpendWise AI",
     page_icon="💰",
     layout="wide"
 )
+
+# -----------------------------
+# AUTHENTICATION GATE
+# -----------------------------
+
+if not is_logged_in():
+
+    # Center the authentication UI
+    left, center, right = st.columns([1, 2, 1])
+
+    with center:
+        st.title("💰 SpendWise AI")
+        st.caption("Your personal AI-powered expense manager")
+
+        login_tab, signup_tab = st.tabs([
+            "🔐 Login",
+            "📝 Create Account"
+        ])
+
+        with login_tab:
+            render_login()
+
+        with signup_tab:
+            render_signup()
+
+    st.stop()
+
+
+# -----------------------------
+# LOGGED-IN USER / LOGOUT
+# -----------------------------
+
+auth_user = st.session_state.get("auth_user", {})
+user_id = auth_user["id"]
+custom_categories = get_categories(user_id)
+
+# -----------------------------
+# SESSION STATE
+# -----------------------------
+
+# UI state is stored in Session State.
+# User financial data now comes from Supabase.
+if "editing_id" not in st.session_state:
+    st.session_state.editing_id = None
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = get_chat_history(user_id)
+if "ai_insights" not in st.session_state:
+    st.session_state.ai_insights = None
+if "ai_recommendations" not in st.session_state:
+    st.session_state.ai_recommendations = None
+if "chat_open" not in st.session_state:
+    st.session_state.chat_open = False
+if "editing_category_id" not in st.session_state:
+    st.session_state.editing_category_id = None
+
+# -----------------------------
+# AUTHENTICATED USER DATA
+# -----------------------------
+
+# Expenses now come from Supabase
+expenses = get_expenses(user_id)
+
+current_month = date.today().strftime("%Y-%m")
+
+monthly_expenses = [
+    expense
+    for expense in expenses
+    if expense["date"].startswith(current_month)
+]
+
+# Budget still uses SQLite temporarily.
+monthly_budget = get_budget(
+    user_id,
+    current_month
+)
+
 st.markdown("""
 <style>
 
@@ -249,8 +305,15 @@ st.markdown("""
             padding: 0 !important;
         }
     }
+
+
 </style>
 """, unsafe_allow_html=True)
+
+if st.query_params.get("logout") == "1":
+    sign_out()
+    st.query_params.clear()
+    st.rerun()
 
 # -------------------------
 # PAGE ROUTING
@@ -277,7 +340,7 @@ st.markdown(f"""
     position: fixed;
     top: 12px;
     left: 12px;
-    right: auto;
+    right: 85px;
     z-index: 999999;
 
     display: flex;
@@ -362,13 +425,13 @@ st.markdown(f"""
 </style>
 
 <div class="spendwise-navbar">
-    <a class="{dashboard_class}" href="?page=dashboard" target="_self">🏠 Dashboard</a>
-    <a class="{analytics_class}" href="?page=analytics" target="_self">📊 Analytics</a>
-    <a class="{monthly_class}" href="?page=monthly" target="_self">📅 Monthly Summary</a>
-    <a class="{reports_class}" href="?page=reports" target="_self">📄 Reports</a>
+<a class="{dashboard_class}" href="?page=dashboard" target="_self">🏠 Dashboard</a>
+<a class="{analytics_class}" href="?page=analytics" target="_self">📊 Analytics</a>
+<a class="{monthly_class}" href="?page=monthly" target="_self">📅 Monthly Summary</a>
+<a class="{reports_class}" href="?page=reports" target="_self">📄 Reports</a>
+<a class="logout-link" href="?logout=1" target="_self">🚪 Logout</a>
 </div>
 """, unsafe_allow_html=True)
-
 # -------------------------
 # CALCULATIONS
 # -------------------------
@@ -397,7 +460,9 @@ category_totals = {
 }
 for expense in monthly_expenses:
     category = expense["category"]
-    category_totals[category] += expense["amount"]
+    category_totals[category] = (
+        category_totals.get(category, 0) + float(expense["amount"])
+    )
 
 st.title("💰 SpendWise AI")
 
@@ -460,7 +525,7 @@ if st.session_state.chat_open:
                 key="clear_spendwise_chat",
                 help="Clear chat"
             ):
-                clear_chat_history()
+                clear_chat_history(user_id)
                 st.session_state.chat_history = []
                 st.rerun()
 
@@ -543,8 +608,8 @@ if st.session_state.chat_open:
                     "I couldn't generate a response for that. "
                     "Try asking it another way."
                 )
-            add_chat_message("user", user_message)
-            add_chat_message("assistant", response)
+            add_chat_message(user_id, "user", user_message)
+            add_chat_message(user_id, "assistant", response)
 
             st.session_state.chat_history.append({
                 "role": "user",
@@ -724,16 +789,17 @@ with st.container(key="monthly_budget_controls"):
 
             else:
                 set_budget(
-                current_month,
-                budget_amount
+                    user_id,
+                    current_month,
+                    budget_amount
                 )
                 st.rerun()
     if budget_error:
         st.warning(budget_error)
 
-#-------------------------
+# -------------------------
 # CATEGORY ICONS
-#-------------------------
+# -------------------------
 
 category_icons = {
     "Food": "🍔",
@@ -745,7 +811,11 @@ category_icons = {
     "Health": "❤️",
     "Other": "📦"
 }
+for custom_category in custom_categories:
+    custom_name = custom_category["name"]
+    custom_emoji = custom_category.get("emoji") or "🏷️"
 
+    category_icons[custom_name] = custom_emoji
 # -------------------------
 # ADD EXPENSE
 # -------------------------
@@ -778,12 +848,22 @@ with st.form("add_expense_form"):
             "🍔 Food": "Food",
             "🚇 Travel": "Travel",
             "🛍️ Shopping": "Shopping",
-            "🎓 Education": "Education",        
+            "🎓 Education": "Education",
             "🎬 Entertainment": "Entertainment",
             "💡 Bills": "Bills",
             "❤️ Health": "Health",
             "📦 Other": "Other"
         }
+        custom_category_ids = {}
+
+        for custom_category in custom_categories:
+            name = custom_category["name"]
+            emoji = custom_category.get("emoji") or "🏷️"
+
+            label = f"{emoji} {name}"
+
+            category_options[label] = name
+            custom_category_ids[name] = custom_category["id"]
 
         selected_category = st.selectbox(
             "Category",
@@ -791,6 +871,7 @@ with st.form("add_expense_form"):
         )
 
         category = category_options[selected_category]
+        selected_category_id = custom_category_ids.get(category)
 
     with row2_col2:
         expense_date = st.date_input(
@@ -818,14 +899,176 @@ if submitted:
 
     else:
         add_expense(
+            user_id,
             expense_name,
             amount,
             category,
             expense_date,
-            description
+            description,
+            selected_category_id
         )
 
         st.rerun()
+
+# -----------------------------
+# MANAGE CUSTOM CATEGORIES
+# -----------------------------
+
+with st.expander("🏷️ Manage Custom Categories"):
+
+    st.caption(
+        "Create your own categories for expenses. "
+        "These categories are private to your account."
+    )
+
+    # Add category
+    with st.form("add_category_form"):
+        category_name = st.text_input(
+            "Category Name",
+            placeholder="e.g. Gaming, College, Fuel"
+        )
+
+        category_emoji = st.text_input(
+            "Emoji",
+            placeholder="e.g. 🎮"
+        )
+
+        add_category_submit = st.form_submit_button(
+            "➕ Add Category"
+        )
+
+    if add_category_submit:
+
+        if not category_name.strip():
+            st.warning("Please enter a category name.")
+
+        else:
+            try:
+                add_category(
+                    user_id,
+                    category_name,
+                    category_emoji
+                )
+
+                st.success("Category added successfully!")
+                st.rerun()
+
+            except Exception as error:
+
+                error_text = str(error).lower()
+
+                if "duplicate" in error_text or "unique" in error_text:
+                    st.warning(
+                        "You already have a category with this name."
+                    )
+
+                else:
+                    st.error(
+                        "Could not add this category right now."
+                    )
+
+
+    # Existing custom categories
+    if custom_categories:
+
+        st.divider()
+        st.markdown("#### Your Categories")
+
+        for custom_category in custom_categories:
+
+            category_id = custom_category["id"]
+            current_name = custom_category["name"]
+            current_emoji = (
+                custom_category.get("emoji") or "🏷️"
+            )
+
+            col1, col2, col3 = st.columns([8, 0.5, 0.5])
+
+            with col1:
+                st.write(
+                    f"{current_emoji} {current_name}"
+                )
+
+            with col2:
+                if st.button(
+                    "✏️",
+                    key=f"edit_category_{category_id}",
+                    help="Edit category"
+                ):
+                    st.session_state[
+                        "editing_category_id"
+                    ] = category_id
+
+            with col3:
+                if st.button(
+                    "🗑️",
+                    key=f"delete_category_{category_id}",
+                    help="Delete category"
+                ):
+                    delete_category(
+                        user_id,
+                        category_id
+                    )
+
+                    st.rerun()
+        if st.session_state.editing_category_id == category_id:
+
+            with st.form(f"edit_category_form_{category_id}"):
+
+                edited_name = st.text_input(
+                    "Category Name",
+                    value=current_name,
+                    key=f"edit_name_{category_id}"
+                )
+
+                edited_emoji = st.text_input(
+                    "Emoji",
+                    value=current_emoji,
+                    key=f"edit_emoji_{category_id}"
+                )
+
+                save_col, cancel_col, spacer = st.columns([0.7, 0.8, 8.5])
+
+                with save_col:
+                    save_edit = st.form_submit_button("💾 Save")
+
+                with cancel_col:
+                    cancel_edit = st.form_submit_button("❌ Cancel")
+
+            if save_edit:
+                if not edited_name.strip():
+                    st.warning("Category name cannot be empty.")
+
+                else:
+                    try:
+                        update_category(
+                            user_id,
+                            category_id,
+                            edited_name,
+                            edited_emoji
+                        )
+
+                        st.session_state.editing_category_id = None
+                        st.success("Category updated!")
+                        st.rerun()
+
+                    except Exception as error:
+                        error_text = str(error).lower()
+
+                        if "duplicate" in error_text or "unique" in error_text:
+                            st.warning(
+                                "You already have a category with this name."
+                    )
+                        else:
+                            st.error(
+                                "Could not update this category right now."
+                            )
+
+            if cancel_edit:
+                st.session_state.editing_category_id = None
+                st.rerun()      
+    else:
+        st.info("You haven't created any custom categories yet.")
 
 # -------------------------
 # FILTERS & SEARCH
@@ -851,19 +1094,28 @@ with search_col:
     )
 
 with category_col:
+
+    filter_categories = [
+        "All",
+        "Food",
+        "Travel",
+        "Shopping",
+        "Education",
+        "Entertainment",
+        "Bills",
+        "Health",
+        "Other"
+    ]
+
+    for custom_category in custom_categories:
+        custom_name = custom_category["name"]
+
+        if custom_name not in filter_categories:
+            filter_categories.append(custom_name)
+
     filter_category = st.selectbox(
         "Category",
-        [
-            "All",
-            "Food",
-            "Travel",
-            "Shopping",
-            "Education",
-            "Entertainment",
-            "Bills",
-            "Health",
-            "Other"
-        ]
+        filter_categories
     )
 
 date_col1, date_col2, amount_col1, amount_col2 = st.columns(4)
@@ -1006,7 +1258,10 @@ with st.container(key="transactions_table"):
                     key=f'delete_{expense["id"]}',
                     help="Delete expense"
                 ):
-                    delete_expense(expense["id"])
+                    delete_expense(
+                        user_id,
+                        expense["id"]
+                    )
                     st.rerun()
 
 # -------------------------
@@ -1051,6 +1306,12 @@ if st.session_state.editing_id is not None:
             "Other"
         ]
 
+        for custom_category in custom_categories:
+            custom_name = custom_category["name"]
+
+            if custom_name not in categories:
+                categories.append(custom_name)
+
         edited_category = st.selectbox(
             "Edit Category",
             categories,
@@ -1070,6 +1331,13 @@ if st.session_state.editing_id is not None:
             value=expense["description"] or ""
         )
 
+
+        edited_category_id = None
+
+        for custom_category in custom_categories:
+            if custom_category["name"] == edited_category:
+                edited_category_id = custom_category["id"]
+                break
         button_col1, button_col2, empty_space = st.columns([1, 1, 6.5])
         edit_error = None
         with button_col1:
@@ -1083,12 +1351,14 @@ if st.session_state.editing_id is not None:
 
                 else:
                     update_expense(
+                        user_id,
                         st.session_state.editing_id,
                         edited_name,
                         edited_amount,
                         edited_category,
                         edited_date,
-                        edited_description
+                        edited_description,
+                        edited_category_id
                     )
 
                     st.session_state.editing_id = None
