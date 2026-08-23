@@ -27,6 +27,7 @@ from analytics import render_analytics
 from auth import is_logged_in, sign_out
 from auth_ui import render_login, render_signup
 from supabase_client import get_supabase_client
+from financial_health import calculate_financial_health
 
 st.set_page_config(
     page_title="SpendWise AI",
@@ -555,6 +556,70 @@ category_budget_context_text = (
     else "No category budgets have been set."
 )
 
+financial_health = calculate_financial_health(
+    monthly_expenses,
+    monthly_budget,
+    category_budget_progress
+)
+
+if financial_health["available"]:
+
+    health_components = financial_health["components"]
+
+    health_context = f"""
+FINANCIAL HEALTH SCORE
+
+Score: {financial_health['score']}/100
+Rating: {financial_health['rating']}
+
+Component Breakdown:
+- Overall Budget Control:
+  {health_components['overall_budget_control']['score']}/40
+
+- Category Budget Control:
+  {
+      health_components['category_budget_control']['score']
+      if health_components['category_budget_control']['score'] is not None
+      else 'Not scored'
+  }/25
+
+- Spending Consistency:
+  {health_components['spending_consistency']['score']}/20
+
+- Budget Headroom:
+  {health_components['budget_headroom']['score']}/15
+
+Positive Factors:
+{chr(10).join(
+    f"- {factor}"
+    for factor in financial_health["positive_factors"]
+) or "- None"}
+
+Needs Attention:
+{chr(10).join(
+    f"- {factor}"
+    for factor in financial_health["attention_factors"]
+) or "- None"}
+
+IMPORTANT:
+The Financial Health Score is calculated deterministically by SpendWise.
+Do not recalculate, replace, or invent a different score.
+You may explain the score and suggest ways to improve it using the supplied financial data.
+"""
+
+else:
+
+    health_context = """
+FINANCIAL HEALTH SCORE
+
+Unavailable.
+
+Reason:
+The user has not configured the required monthly budget.
+
+Do not invent a Financial Health Score.
+"""
+
 #-------------------------
 # Financial Context for AI
 #-------------------------
@@ -578,6 +643,8 @@ CATEGORY SPENDING
 
 CATEGORY BUDGETS:
 {category_budget_context_text}
+
+{health_context}
 
 Number of Transactions: {len(monthly_expenses)}
 """
@@ -846,6 +913,89 @@ if monthly_budget > 0:
         st.error(
             f"🚨 Budget exceeded by ₹{exceeded_amount:.2f}!"
         )
+
+#-------------------------
+# Financial Health Section
+#-------------------------
+
+st.subheader("🧠 Financial Health")
+
+if not financial_health["available"]:
+
+    st.info(financial_health["reason"])
+
+else:
+    health_score = financial_health["score"]
+    health_rating = financial_health["rating"]
+
+    st.metric(
+        "Monthly Financial Health Score",
+        f"{health_score}/100"
+    )
+
+    if health_score >= 90:
+        st.success(f"🟢 {health_rating}")
+
+    elif health_score >= 75:
+        st.success(f"🟢 {health_rating}")
+
+    elif health_score >= 60:
+        st.warning(f"🟡 {health_rating}")
+
+    elif health_score >= 40:
+        st.warning(f"🟠 {health_rating}")
+
+    else:
+        st.error(f"🔴 {health_rating}")
+
+with st.expander("📊 Why this score?"):
+
+    components = financial_health["components"]
+
+    overall = components["overall_budget_control"]
+    category = components["category_budget_control"]
+    consistency = components["spending_consistency"]
+    headroom = components["budget_headroom"]
+
+    st.write(
+        f"**Overall Budget Control:** "
+        f"{overall['score']}/{overall['max']}"
+    )
+
+    if category["score"] is None:
+        st.write(
+            "**Category Budget Control:** "
+            "Not scored — no category budgets configured"
+        )
+    else:
+        st.write(
+            f"**Category Budget Control:** "
+            f"{category['score']:.1f}/{category['max']}"
+        )
+
+    st.write(
+        f"**Spending Consistency:** "
+        f"{consistency['score']}/{consistency['max']}"
+    )
+
+    st.write(
+        f"**Budget Headroom:** "
+        f"{headroom['score']}/{headroom['max']}"
+    )
+    positive_factors = financial_health["positive_factors"]
+    attention_factors = financial_health["attention_factors"]
+
+    if positive_factors:
+        st.markdown("#### ✅ What's helping")
+
+        for factor in positive_factors:
+            st.write(f"• {factor}")
+
+    if attention_factors:
+        st.markdown("#### ⚠️ Needs attention")
+
+        for factor in attention_factors:
+            st.write(f"• {factor}")
 
 #-------------------------
 # BUDGET SETTING
