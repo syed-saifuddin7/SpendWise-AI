@@ -1,6 +1,8 @@
 import streamlit as st
 from cloud_db import (
     add_expense,
+    delete_category_budget,
+    get_category_budgets,
     get_expenses,
     update_expense,
     delete_expense,
@@ -12,7 +14,10 @@ from cloud_db import (
     add_category,
     update_category,
     delete_category,
-    clear_chat_history
+    clear_chat_history,
+    set_category_budget,
+    get_category_budgets,
+    delete_category_budget
 )
 from datetime import date
 from ai import ask_ai
@@ -64,6 +69,26 @@ auth_user = st.session_state.get("auth_user", {})
 user_id = auth_user["id"]
 custom_categories = get_categories(user_id)
 
+# -------------------------
+# CATEGORY ICONS
+# -------------------------
+
+category_icons = {
+    "Food": "🍔",
+    "Travel": "🚇",
+    "Shopping": "🛍️",
+    "Education": "🎓",
+    "Entertainment": "🎬",
+    "Bills": "💡",
+    "Health": "❤️",
+    "Other": "📦"
+}
+for custom_category in custom_categories:
+    custom_name = custom_category["name"]
+    custom_emoji = custom_category.get("emoji") or "🏷️"
+
+    category_icons[custom_name] = custom_emoji
+
 # -----------------------------
 # SESSION STATE
 # -----------------------------
@@ -82,6 +107,8 @@ if "chat_open" not in st.session_state:
     st.session_state.chat_open = False
 if "editing_category_id" not in st.session_state:
     st.session_state.editing_category_id = None
+if "category_budget_widget_version" not in st.session_state:
+    st.session_state.category_budget_widget_version = 0
 
 # -----------------------------
 # AUTHENTICATED USER DATA
@@ -103,6 +130,16 @@ monthly_budget = get_budget(
     user_id,
     current_month
 )
+
+category_budgets = get_category_budgets(
+    user_id,
+    current_month
+)
+
+category_budget_map = {
+    item["category_name"]: float(item["amount"])
+    for item in category_budgets
+}
 
 st.markdown("""
 <style>
@@ -464,7 +501,59 @@ for expense in monthly_expenses:
         category_totals.get(category, 0) + float(expense["amount"])
     )
 
+# -----------------------------
+# CATEGORY BUDGET PROGRESS
+# -----------------------------
+
+category_budget_progress = {}
+
+for category_name, budget_amount in category_budget_map.items():
+
+    spent = float(
+        category_totals.get(category_name, 0)
+    )
+
+    budget_amount = float(budget_amount)
+
+    percentage = (
+        (spent / budget_amount) * 100
+        if budget_amount > 0
+        else 0
+    )
+
+    category_budget_progress[category_name] = {
+        "spent": spent,
+        "budget": budget_amount,
+        "percentage": percentage
+    }
+
 st.title("💰 SpendWise AI")
+
+category_budget_context = []
+
+for category_name, info in category_budget_progress.items():
+    spent = info["spent"]
+    budget = info["budget"]
+    percentage = info["percentage"]
+
+    if percentage >= 100:
+        status = "OVER BUDGET"
+    elif percentage >= 80:
+        status = "APPROACHING LIMIT"
+    else:
+        status = "WITHIN BUDGET"
+
+    category_budget_context.append(
+        f"{category_name}: "
+        f"₹{spent:.2f} spent / ₹{budget:.2f} budget "
+        f"({percentage:.1f}% used, {status})"
+    )
+
+category_budget_context_text = (
+    "\n".join(category_budget_context)
+    if category_budget_context
+    else "No category budgets have been set."
+)
 
 #-------------------------
 # Financial Context for AI
@@ -486,6 +575,9 @@ Budget Used: {budget_percentage:.1f}%
 
 CATEGORY SPENDING
 {category_context}
+
+CATEGORY BUDGETS:
+{category_budget_context_text}
 
 Number of Transactions: {len(monthly_expenses)}
 """
@@ -797,25 +889,167 @@ with st.container(key="monthly_budget_controls"):
     if budget_error:
         st.warning(budget_error)
 
-# -------------------------
-# CATEGORY ICONS
-# -------------------------
 
-category_icons = {
-    "Food": "🍔",
-    "Travel": "🚇",
-    "Shopping": "🛍️",
-    "Education": "🎓",
-    "Entertainment": "🎬",
-    "Bills": "💡",
-    "Health": "❤️",
-    "Other": "📦"
-}
+# -----------------------------
+# CATEGORY-WISE BUDGETS
+# -----------------------------
+
+st.divider()
+st.subheader("🎯 Category Budgets")
+
+if category_budget_progress:
+
+    for category_name, info in category_budget_progress.items():
+
+        spent = info["spent"]
+        budget = info["budget"]
+        percentage = info["percentage"]
+
+        emoji = category_icons.get(
+            category_name,
+            "🏷️"
+        )
+
+        st.markdown(
+            f"**{emoji} {category_name}**"
+        )
+
+        st.write(
+            f"₹{spent:,.0f} / ₹{budget:,.0f}"
+        )
+
+        # Streamlit progress must stay between 0 and 1
+        progress_value = min(
+            spent / budget,
+            1.0
+        )
+
+        st.progress(progress_value)
+
+        if percentage >= 100:
+            st.error(
+                f"🚨 Over budget — {percentage:.0f}% used"
+            )
+
+        elif percentage >= 80:
+            st.warning(
+                f"⚠️ Approaching limit — {percentage:.0f}% used"
+            )
+
+        else:
+            st.caption(
+                f"✅ {percentage:.0f}% used"
+            )
+
+        st.write("")
+
+all_categories = [
+    "Food",
+    "Travel",
+    "Shopping",
+    "Education",
+    "Entertainment",
+    "Bills",
+    "Health",
+    "Other"
+]
+
 for custom_category in custom_categories:
     custom_name = custom_category["name"]
-    custom_emoji = custom_category.get("emoji") or "🏷️"
 
-    category_icons[custom_name] = custom_emoji
+    if custom_name not in all_categories:
+        all_categories.append(custom_name)
+
+
+with st.expander("⚙️ Manage Category Budgets"):
+
+    selected_budget_category = st.selectbox(
+        "Category",
+        all_categories,
+        key="category_budget_category"
+    )
+
+    existing_budget = category_budget_map.get(
+        selected_budget_category,
+        0.0
+    )
+
+    category_budget_amount = st.number_input(
+        "Monthly Category Budget (₹)",
+        min_value=0.0,
+        value=float(existing_budget),
+        step=500.0,
+        key=(
+            f"category_budget_amount_"
+            f"{selected_budget_category}_"
+            f"{st.session_state.category_budget_widget_version}"
+        )
+    )
+
+    save_col, delete_col, spacer = st.columns(
+        [0.8, 0.8, 8.4]
+    )
+
+    with save_col:
+        save_category_budget = st.button(
+            "💾 Save",
+            key="save_category_budget"
+        )
+
+    with delete_col:
+        delete_category_budget_clicked = st.button(
+            "🗑️ Delete",
+            key="delete_category_budget_button"
+        )
+
+
+    if save_category_budget:
+
+        if category_budget_amount <= 0:
+            st.warning(
+                "Category budget must be greater than ₹0."
+            )
+
+        else:
+            selected_category_id = None
+
+            for custom_category in custom_categories:
+                if (
+                    custom_category["name"]
+                    == selected_budget_category
+                ):
+                    selected_category_id = custom_category["id"]
+                    break
+
+            set_category_budget(
+                user_id,
+                selected_budget_category,
+                current_month,
+                category_budget_amount,
+                selected_category_id
+            )
+
+            st.success("Category budget saved!")
+            st.rerun()
+
+
+    if delete_category_budget_clicked:
+
+        if selected_budget_category not in category_budget_map:
+            st.info(
+                "No category budget exists for this category."
+            )
+
+        else:
+            delete_category_budget(
+                user_id,
+                selected_budget_category,
+                current_month
+            )
+            st.session_state.category_budget_widget_version += 1
+
+            st.rerun()
+
 # -------------------------
 # ADD EXPENSE
 # -------------------------

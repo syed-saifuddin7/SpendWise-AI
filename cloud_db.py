@@ -228,13 +228,12 @@ def get_categories(user_id):
 
     return response.data
 
-
 def update_category(user_id, category_id, name, emoji=None):
     supabase = get_supabase_client()
 
     clean_name = name.strip()
 
-    # Update the actual category
+    # Update category itself
     response = (
         supabase
         .table("categories")
@@ -247,9 +246,18 @@ def update_category(user_id, category_id, name, emoji=None):
         .execute()
     )
 
-    # Keep existing expenses synchronized with the renamed category
+    # Keep linked expenses synchronized
     supabase.table("expenses").update({
         "category": clean_name
+    }).eq(
+        "category_id", category_id
+    ).eq(
+        "user_id", user_id
+    ).execute()
+
+    # Keep linked category budgets synchronized
+    supabase.table("category_budgets").update({
+        "category_name": clean_name
     }).eq(
         "category_id", category_id
     ).eq(
@@ -261,7 +269,7 @@ def update_category(user_id, category_id, name, emoji=None):
 def delete_category(user_id, category_id):
     supabase = get_supabase_client()
 
-    # Move expenses using this custom category to built-in "Other"
+    # Move linked expenses to built-in Other
     supabase.table("expenses").update({
         "category": "Other",
         "category_id": None
@@ -271,13 +279,89 @@ def delete_category(user_id, category_id):
         "user_id", user_id
     ).execute()
 
-    # Delete the custom category
+    # Delete linked category budgets
+    supabase.table("category_budgets").delete().eq(
+        "category_id", category_id
+    ).eq(
+        "user_id", user_id
+    ).execute()
+
+    # Delete category itself
     response = (
         supabase
         .table("categories")
         .delete()
         .eq("id", category_id)
         .eq("user_id", user_id)
+        .execute()
+    )
+
+    return response.data
+
+# -------------------------
+# CATEGORY BUDGETS
+# -------------------------
+
+def set_category_budget(
+    user_id,
+    category_name,
+    month,
+    amount,
+    category_id=None
+):
+    supabase = get_supabase_client()
+
+    data = {
+        "user_id": user_id,
+        "category_name": category_name,
+        "category_id": category_id,
+        "month": month,
+        "amount": float(amount)
+    }
+
+    response = (
+        supabase
+        .table("category_budgets")
+        .upsert(
+            data,
+            on_conflict="user_id,category_name,month"
+        )
+        .execute()
+    )
+
+    return response.data
+
+
+def get_category_budgets(user_id, month):
+    supabase = get_supabase_client()
+
+    response = (
+        supabase
+        .table("category_budgets")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("month", month)
+        .order("category_name")
+        .execute()
+    )
+
+    return response.data
+
+
+def delete_category_budget(
+    user_id,
+    category_name,
+    month
+):
+    supabase = get_supabase_client()
+
+    response = (
+        supabase
+        .table("category_budgets")
+        .delete()
+        .eq("user_id", user_id)
+        .eq("category_name", category_name)
+        .eq("month", month)
         .execute()
     )
 
