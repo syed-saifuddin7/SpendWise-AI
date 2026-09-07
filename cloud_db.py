@@ -1,3 +1,5 @@
+import supabase
+
 from supabase_client import get_supabase_client
 
 
@@ -81,6 +83,137 @@ def delete_expense(user_id, expense_id):
         .table("expenses")
         .delete()
         .eq("id", expense_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+
+    return response.data
+
+# -------------------------
+# RECURRING EXPENSES
+# -------------------------
+
+def add_recurring_expense(
+    user_id,
+    name,
+    amount,
+    category,
+    category_id,
+    description,
+    frequency,
+    start_date,
+    next_run_date
+):
+    supabase = get_supabase_client()
+
+    data = {
+        "user_id": user_id,
+        "name": name.strip(),
+        "amount": float(amount),
+        "category": category,
+        "category_id": category_id,
+        "description": description.strip() if description else "",
+        "frequency": frequency,
+        "start_date": str(start_date),
+        "next_run_date": str(next_run_date),
+        "is_active": True,
+        "last_generated_date": None
+    }
+
+    response = (
+        supabase
+        .table("recurring_expenses")
+        .insert(data)
+        .execute()
+    )
+
+    return response.data
+
+
+def get_recurring_expenses(user_id):
+    supabase = get_supabase_client()
+
+    response = (
+        supabase
+        .table("recurring_expenses")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("next_run_date")
+        .execute()
+    )
+
+    return response.data
+
+
+def update_recurring_expense(
+    user_id,
+    recurring_id,
+    name,
+    amount,
+    category,
+    category_id,
+    description,
+    frequency,
+    start_date,
+    next_run_date
+):
+    supabase = get_supabase_client()
+
+    data = {
+        "name": name.strip(),
+        "amount": float(amount),
+        "category": category,
+        "category_id": category_id,
+        "description": description.strip() if description else "",
+        "frequency": frequency,
+        "start_date": str(start_date),
+        "next_run_date": str(next_run_date)
+    }
+
+    response = (
+        supabase
+        .table("recurring_expenses")
+        .update(data)
+        .eq("id", recurring_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+
+    return response.data
+
+
+def set_recurring_expense_active(
+    user_id,
+    recurring_id,
+    is_active
+):
+    supabase = get_supabase_client()
+
+    response = (
+        supabase
+        .table("recurring_expenses")
+        .update({
+            "is_active": bool(is_active)
+        })
+        .eq("id", recurring_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+
+    return response.data
+
+
+def delete_recurring_expense(
+    user_id,
+    recurring_id
+):
+    supabase = get_supabase_client()
+
+    response = (
+        supabase
+        .table("recurring_expenses")
+        .delete()
+        .eq("id", recurring_id)
         .eq("user_id", user_id)
         .execute()
     )
@@ -366,3 +499,88 @@ def delete_category_budget(
     )
 
     return response.data
+
+def process_due_recurring_expenses(user_id):
+    from datetime import date, timedelta
+    import calendar
+    supabase = get_supabase_client()
+    today = date.today().isoformat()
+
+    due_recurring = (
+        supabase
+        .table("recurring_expenses")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("is_active", True)
+        .lte("next_run_date", today)
+        .execute()
+    )
+
+    if not due_recurring.data:
+        return 0
+
+    created_count = 0
+
+    for recurring in due_recurring.data:
+
+        # Duplicate protection:
+        existing = (
+            supabase
+            .table("expenses")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("recurring_expense_id", recurring["id"])
+            .eq("date", recurring["next_run_date"])
+            .execute()
+        )
+
+        if existing.data:
+            continue
+
+        # Create the expense.
+        supabase.table("expenses").insert({
+            "user_id": user_id,
+            "name": recurring["name"],
+            "amount": recurring["amount"],
+            "category": recurring["category"],
+            "category_id": recurring["category_id"],
+            "description": recurring["description"],
+            "date": recurring["next_run_date"],
+            "recurring_expense_id": recurring["id"]
+        }).execute()
+
+        created_count += 1
+
+        current_run = date.fromisoformat(recurring["next_run_date"])
+
+        # Calculate the next occurrence.
+        if recurring["frequency"] == "weekly":
+            next_run = current_run + timedelta(days=7)
+
+        elif recurring["frequency"] == "monthly":
+            month = current_run.month + 1
+            year = current_run.year
+
+            if month > 12:
+                month = 1
+                year += 1
+
+            last_day = calendar.monthrange(year, month)[1]
+            day = min(current_run.day, last_day)
+
+            next_run = date(year, month, day)
+
+        else:  # yearly
+            year = current_run.year + 1
+
+            try:
+                next_run = current_run.replace(year=year)
+            except ValueError:
+                next_run = date(year, 2, 28)
+
+        supabase.table("recurring_expenses").update({
+            "last_generated_date": recurring["next_run_date"],
+            "next_run_date": next_run.isoformat()
+        }).eq("id", recurring["id"]).execute()
+
+    return created_count

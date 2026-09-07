@@ -17,9 +17,16 @@ from cloud_db import (
     clear_chat_history,
     set_category_budget,
     get_category_budgets,
-    delete_category_budget
+    delete_category_budget, 
+    add_recurring_expense,
+    get_recurring_expenses,
+    update_recurring_expense,
+    set_recurring_expense_active,
+    delete_recurring_expense,
+    process_due_recurring_expenses,
 )
-from datetime import date
+import calendar
+from datetime import date, timedelta
 from ai import ask_ai
 from monthly_summary import render_monthly_summary
 from reports import render_reports
@@ -114,9 +121,13 @@ if "category_budget_widget_version" not in st.session_state:
 # -----------------------------
 # AUTHENTICATED USER DATA
 # -----------------------------
+generated_recurring_count = process_due_recurring_expenses(user_id)
 
 # Expenses now come from Supabase
 expenses = get_expenses(user_id)
+
+# Recurring expenses now come from Supabase
+recurring_expenses = get_recurring_expenses(user_id)
 
 current_month = date.today().strftime("%Y-%m")
 
@@ -948,54 +959,54 @@ else:
     else:
         st.error(f"🔴 {health_rating}")
 
-with st.expander("📊 Why this score?"):
+if financial_health["available"]:
+    with st.expander("📊 Why this score?"):
 
-    components = financial_health["components"]
+        components = financial_health["components"]
 
-    overall = components["overall_budget_control"]
-    category = components["category_budget_control"]
-    consistency = components["spending_consistency"]
-    headroom = components["budget_headroom"]
+        overall = components["overall_budget_control"]
+        category = components["category_budget_control"]
+        consistency = components["spending_consistency"]
+        headroom = components["budget_headroom"]
 
-    st.write(
-        f"**Overall Budget Control:** "
-        f"{overall['score']}/{overall['max']}"
-    )
-
-    if category["score"] is None:
         st.write(
-            "**Category Budget Control:** "
-            "Not scored — no category budgets configured"
-        )
-    else:
-        st.write(
-            f"**Category Budget Control:** "
-            f"{category['score']:.1f}/{category['max']}"
+            f"**Overall Budget Control:** "
+            f"{overall['score']}/{overall['max']}"
         )
 
-    st.write(
-        f"**Spending Consistency:** "
-        f"{consistency['score']}/{consistency['max']}"
-    )
+        if category["score"] is None:
+            st.write(
+                "**Category Budget Control:** "
+                "Not scored — no category budgets configured"
+            )
+        else:
+            st.write(
+                f"**Category Budget Control:** "
+                f"{category['score']:.1f}/{category['max']}"
+            )
 
-    st.write(
-        f"**Budget Headroom:** "
-        f"{headroom['score']}/{headroom['max']}"
-    )
-    positive_factors = financial_health["positive_factors"]
-    attention_factors = financial_health["attention_factors"]
+        st.write(
+            f"**Spending Consistency:** "
+            f"{consistency['score']}/{consistency['max']}"
+        )
 
-    if positive_factors:
-        st.markdown("#### ✅ What's helping")
+        st.write(
+            f"**Budget Headroom:** "
+            f"{headroom['score']}/{headroom['max']}"
+        )
 
-        for factor in positive_factors:
-            st.write(f"• {factor}")
+        positive_factors = financial_health["positive_factors"]
+        attention_factors = financial_health["attention_factors"]
 
-    if attention_factors:
-        st.markdown("#### ⚠️ Needs attention")
+        if positive_factors:
+            st.markdown("#### ✅ What's helping")
+            for factor in positive_factors:
+                st.write(f"• {factor}")
 
-        for factor in attention_factors:
-            st.write(f"• {factor}")
+        if attention_factors:
+            st.markdown("#### ⚠️ Needs attention")
+            for factor in attention_factors:
+                st.write(f"• {factor}")
 
 #-------------------------
 # BUDGET SETTING
@@ -1293,6 +1304,408 @@ if submitted:
         )
 
         st.rerun()
+
+# -------------------------
+# RECURRING EXPENSES
+# -------------------------
+
+st.divider()
+st.subheader("🔁 Recurring Expenses")
+
+with st.expander("➕ Add Recurring Expense"):
+
+    with st.form("add_recurring_expense_form"):
+
+        recurring_col1, recurring_col2 = st.columns(2)
+
+        with recurring_col1:
+            recurring_name = st.text_input(
+                "Recurring Expense Name",
+                placeholder="e.g. Netflix, Rent, Gym"
+            )
+
+        with recurring_col2:
+            recurring_amount = st.number_input(
+                "Recurring Amount (₹)",
+                min_value=0.0,
+                step=10.0
+            )
+
+        recurring_col3, recurring_col4 = st.columns(2)
+
+        with recurring_col3:
+            recurring_category_options = {
+                "🍔 Food": "Food",
+                "🚇 Travel": "Travel",
+                "🛍️ Shopping": "Shopping",
+                "🎓 Education": "Education",
+                "🎬 Entertainment": "Entertainment",
+                "💡 Bills": "Bills",
+                "❤️ Health": "Health",
+                "📦 Other": "Other"
+            }
+
+            recurring_custom_category_ids = {}
+
+            for custom_category in custom_categories:
+                name = custom_category["name"]
+                emoji = custom_category.get("emoji") or "🏷️"
+
+                label = f"{emoji} {name}"
+
+                recurring_category_options[label] = name
+                recurring_custom_category_ids[name] = custom_category["id"]
+
+            recurring_selected_category = st.selectbox(
+                "Category",
+                list(recurring_category_options.keys()),
+                key="recurring_category"
+            )
+
+            recurring_category = recurring_category_options[
+                recurring_selected_category
+            ]
+
+            recurring_category_id = recurring_custom_category_ids.get(
+                recurring_category
+            )
+
+        with recurring_col4:
+            recurring_frequency = st.selectbox(
+                "Frequency",
+                ["weekly", "monthly", "yearly"]
+            )
+
+        recurring_start_date = st.date_input(
+            "Start Date",
+            key="recurring_start_date"
+        )
+
+        recurring_description = st.text_area(
+            "Description",
+            placeholder="Optional note about this recurring expense..."
+        )
+
+        recurring_submit = st.form_submit_button(
+            "➕ Add Recurring Expense"
+        )
+        if recurring_submit:
+
+            if not recurring_name.strip():
+                st.error("Please enter a recurring expense name.")
+
+            elif recurring_amount <= 0:
+                st.error("Recurring amount must be greater than ₹0.")
+
+            else:
+                # Calculate the next occurrence after the start date.
+                if recurring_frequency == "weekly":
+                    next_run_date = recurring_start_date + timedelta(days=7)
+
+                elif recurring_frequency == "monthly":
+                    next_month = recurring_start_date.month + 1
+                    next_year = recurring_start_date.year
+
+                    if next_month > 12:
+                        next_month = 1
+                        next_year += 1
+
+                    last_day = calendar.monthrange(
+                        next_year,
+                        next_month
+                    )[1]
+
+                    next_day = min(
+                        recurring_start_date.day,
+                        last_day
+                    )
+
+                    next_run_date = date(
+                        next_year,
+                        next_month,
+                        next_day
+                    )
+
+                else:  # yearly
+                    next_year = recurring_start_date.year + 1
+
+                    try:
+                        next_run_date = recurring_start_date.replace(
+                            year=next_year
+                        )
+                    except ValueError:
+                        # Handles February 29 in a non-leap year.
+                        next_run_date = date(
+                            next_year,
+                            2,
+                            28
+                        )
+
+                add_recurring_expense(
+                    user_id=user_id,
+                    name=recurring_name.strip(),
+                    amount=recurring_amount,
+                    category=recurring_category,
+                    category_id=recurring_category_id,
+                    description=recurring_description.strip(),
+                    frequency=recurring_frequency,
+                    start_date=recurring_start_date.isoformat(),
+                    next_run_date=next_run_date.isoformat()
+                )
+
+                st.success(
+                    f"Recurring expense '{recurring_name.strip()}' added!"
+                )
+
+                st.rerun()
+
+if recurring_expenses:
+    st.markdown("### Current Recurring Expenses")
+
+    for recurring in recurring_expenses:
+        is_active = recurring.get("is_active", True)
+        status = "Active" if is_active else "Paused"
+
+        info_col, action_col = st.columns([5, 1])
+
+        with info_col:
+            st.markdown(
+                    f"""
+                **{recurring['name']}**  
+                ₹{float(recurring['amount']):,.2f} • {recurring['category']}  
+                {recurring['frequency'].title()} • {status}  
+                Next run: {recurring['next_run_date']}
+                """
+            )
+
+        with action_col:
+            if is_active:
+                if st.button(
+                    "⏸️ Pause",
+                    key=f"pause_recurring_{recurring['id']}"
+                ):
+                    set_recurring_expense_active(
+                        user_id,
+                        recurring["id"],
+                        False
+                    )
+
+                    st.rerun()
+
+            else:
+                if st.button(
+                    "▶️ Resume",
+                    key=f"resume_recurring_{recurring['id']}"
+                ):
+                    set_recurring_expense_active(
+                        user_id,
+                        recurring["id"],
+                        True
+                    )
+
+                    st.rerun()
+            delete_key = f"confirm_delete_recurring_{recurring['id']}"
+
+            if delete_key not in st.session_state:
+                st.session_state[delete_key] = False
+
+            if not st.session_state[delete_key]:
+                if st.button(
+                    "🗑️ Delete",
+                    key=f"delete_recurring_{recurring['id']}"
+                ):
+                    st.session_state[delete_key] = True
+                    st.rerun()
+
+            else:
+                st.warning(
+                    f"Delete '{recurring['name']}' permanently?"
+                )
+
+                confirm_col, cancel_col = st.columns(2)
+
+                with confirm_col:
+                    if st.button(
+                        "✅ Yes",
+                        key=f"confirm_delete_button_{recurring['id']}"
+                    ):
+                        delete_recurring_expense(
+                            user_id,
+                            recurring["id"]
+                        )
+
+                        del st.session_state[delete_key]
+
+                        st.rerun()
+
+                with cancel_col:
+                    if st.button(
+                        "❌ Cancel",
+                        key=f"cancel_delete_recurring_{recurring['id']}"
+                    ):
+                        st.session_state[delete_key] = False
+                        st.rerun()
+        with st.expander(
+            f"✏️ Edit {recurring['name']}"
+        ):
+            with st.form(
+                f"edit_recurring_form_{recurring['id']}"
+            ):
+                edit_name = st.text_input(
+                    "Name",
+                    value=recurring["name"],
+                    key=f"edit_recurring_name_{recurring['id']}"
+                )
+
+                edit_amount = st.number_input(
+                    "Amount (₹)",
+                    min_value=0.0,
+                    value=float(recurring["amount"]),
+                    step=10.0,
+                    key=f"edit_recurring_amount_{recurring['id']}"
+                )
+
+                edit_category_labels = list(
+                    recurring_category_options.keys()
+                )
+
+                current_category_label = next(
+                    (
+                        label
+                        for label, name
+                        in recurring_category_options.items()
+                        if name == recurring["category"]
+                    ),
+                    edit_category_labels[0]
+                )
+
+                edit_category_label = st.selectbox(
+                    "Category",
+                    edit_category_labels,
+                    index=edit_category_labels.index(
+                        current_category_label
+                    ),
+                    key=f"edit_recurring_category_{recurring['id']}"
+                )
+
+                edit_category = recurring_category_options[
+                    edit_category_label
+                ]
+
+                edit_category_id = recurring_custom_category_ids.get(
+                    edit_category
+                )
+
+                frequency_options = [
+                    "weekly",
+                    "monthly",
+                    "yearly"
+                ]
+
+                edit_frequency = st.selectbox(
+                    "Frequency",
+                    frequency_options,
+                    index=frequency_options.index(
+                        recurring["frequency"]
+                    ),
+                    key=f"edit_recurring_frequency_{recurring['id']}"
+                )
+
+                edit_start_date = st.date_input(
+                    "Start Date",
+                    value=date.fromisoformat(
+                        recurring["start_date"]
+                    ),
+                    key=f"edit_recurring_start_{recurring['id']}"
+                )
+
+                edit_description = st.text_area(
+                    "Description",
+                    value=recurring.get("description") or "",
+                    key=f"edit_recurring_description_{recurring['id']}"
+                )
+
+                edit_submit = st.form_submit_button(
+                    "💾 Save Changes"
+                )
+
+                if edit_submit:
+
+                    if not edit_name.strip():
+                        st.error("Please enter a recurring expense name.")
+
+                    elif edit_amount <= 0:
+                        st.error("Recurring amount must be greater than ₹0.")
+
+                    else:
+                        if edit_frequency == "weekly":
+                            edit_next_run_date = (
+                                edit_start_date
+                                + timedelta(days=7)
+                            )
+
+                        elif edit_frequency == "monthly":
+                            next_month = edit_start_date.month + 1
+                            next_year = edit_start_date.year
+
+                            if next_month > 12:
+                                next_month = 1
+                                next_year += 1
+
+                            last_day = calendar.monthrange(
+                                next_year,
+                                next_month
+                            )[1]
+
+                            next_day = min(
+                                edit_start_date.day,
+                                last_day
+                            )
+
+                            edit_next_run_date = date(
+                                next_year,
+                                next_month,
+                                next_day
+                            )
+
+                        else:
+                            next_year = edit_start_date.year + 1
+
+                            try:
+                                edit_next_run_date = (
+                                    edit_start_date.replace(
+                                        year=next_year
+                                    )
+                                )
+                            except ValueError:
+                                edit_next_run_date = date(
+                                    next_year,
+                                    2,
+                                    28
+                                )
+
+                        update_recurring_expense(
+                            user_id=user_id,
+                            recurring_id=recurring["id"],
+                            name=edit_name.strip(),
+                            amount=edit_amount,
+                            category=edit_category,
+                            category_id=edit_category_id,
+                            description=edit_description.strip(),
+                            frequency=edit_frequency,
+                            start_date=edit_start_date.isoformat(),
+                            next_run_date=edit_next_run_date.isoformat()
+                        )
+
+                        st.success(
+                            f"'{edit_name.strip()}' updated successfully!"
+                        )
+
+                        st.rerun()
+        st.divider()
+
+else:
+    st.info("No recurring expenses yet.")
 
 # -----------------------------
 # MANAGE CUSTOM CATEGORIES
