@@ -841,9 +841,12 @@ if page == "reports":
 if page == "analytics":
 
     render_analytics(
+        expenses,
         monthly_expenses,
         category_totals,
-        financial_context
+        financial_context,
+        monthly_budget,
+        category_budget_progress
     )
 
     st.stop()
