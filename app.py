@@ -28,6 +28,7 @@ from cloud_db import (
 import calendar
 from datetime import date, timedelta
 from ai import ask_ai
+from ai_context import build_ai_context
 from monthly_summary import render_monthly_summary
 from reports import render_reports
 from analytics import render_analytics
@@ -131,6 +132,22 @@ recurring_expenses = get_recurring_expenses(user_id)
 
 current_month = date.today().strftime("%Y-%m")
 
+today = date.today()
+
+if today.month == 1:
+    previous_month = f"{today.year - 1}-12"
+else:
+    previous_month = f"{today.year}-{today.month - 1:02d}"
+
+previous_month_expenses = [
+    expense
+    for expense in expenses
+    if expense["date"].startswith(previous_month)
+]
+previous_month_total = sum(
+    float(expense["amount"])
+    for expense in previous_month_expenses
+)
 monthly_expenses = [
     expense
     for expense in expenses
@@ -185,21 +202,66 @@ st.markdown("""
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
     }
 
-    .st-key-spendwise_chat_panel {
-        position: fixed;
-        right: 28px;
-        bottom: 105px;
-        width: 390px;
-        max-height: 520px;
-        overflow-y: auto;
-        background: #0e1117;
-        border: 1px solid #3a3f4b;
-        border-radius: 18px;
-        padding: 18px;
-        z-index: 9998;
-        box-shadow: 0 12px 35px rgba(0, 0, 0, 0.45);
-    }
+.st-key-spendwise_chat_panel {
+    position: fixed;
+    right: 18px;
+    top: 64px;
+    bottom: 18px;
 
+    width: 560px;
+    max-width: calc(100vw - 36px);
+
+    box-sizing: border-box;
+    background: #0e1117;
+    border: 1px solid #3a3f4b;
+    border-radius: 18px;
+    padding: 12px 14px;
+
+    z-index: 9998;
+    overflow: hidden;
+
+    box-shadow: 0 12px 35px rgba(0, 0, 0, 0.45);
+}
+
+/* Compact header */
+.st-key-spendwise_chat_panel h3 {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+
+/* Native Streamlit scrolling handles the chat body reliably. */
+.st-key-spendwise_chat_body {
+    border: 0 !important;
+}
+
+/* Keep quick-action labels readable and compact. */
+.st-key-spendwise_chat_body button {
+    white-space: normal !important;
+    line-height: 1.1 !important;
+    min-height: 36px !important;
+}
+
+/* Compact the message form inside the scrollable body. */
+.st-key-spendwise_chat_body [data-testid="stForm"] {
+    margin-top: 4px;
+}
+
+@media (max-width: 650px) {
+    .st-key-spendwise_chat_panel {
+        left: 8px;
+        right: 8px;
+        top: 64px;
+        bottom: 8px;
+
+        width: auto;
+        max-width: none;
+
+        border-radius: 14px;
+        padding: 10px;
+    }
+}
+
+    
     /* =========================
        METRICS & CONTAINERS
     ========================= */    
@@ -354,7 +416,21 @@ st.markdown("""
             padding: 0 !important;
         }
     }
+@media (max-width: 650px) {
 
+    .st-key-spendwise_chat_panel {
+        left: 8px;
+        right: 8px;
+        top: 8px;
+        bottom: 8px;
+
+        width: auto;
+        max-width: none;
+
+        border-radius: 14px;
+        padding: 12px;
+    }
+}
 
 </style>
 """, unsafe_allow_html=True)
@@ -541,31 +617,9 @@ for category_name, budget_amount in category_budget_map.items():
 
 st.title("💰 SpendWise AI")
 
-category_budget_context = []
-
-for category_name, info in category_budget_progress.items():
-    spent = info["spent"]
-    budget = info["budget"]
-    percentage = info["percentage"]
-
-    if percentage >= 100:
-        status = "OVER BUDGET"
-    elif percentage >= 80:
-        status = "APPROACHING LIMIT"
-    else:
-        status = "WITHIN BUDGET"
-
-    category_budget_context.append(
-        f"{category_name}: "
-        f"₹{spent:.2f} spent / ₹{budget:.2f} budget "
-        f"({percentage:.1f}% used, {status})"
-    )
-
-category_budget_context_text = (
-    "\n".join(category_budget_context)
-    if category_budget_context
-    else "No category budgets have been set."
-)
+user_preferences = {
+    "currency": "INR"
+}
 
 financial_health = calculate_financial_health(
     monthly_expenses,
@@ -573,118 +627,34 @@ financial_health = calculate_financial_health(
     category_budget_progress
 )
 
-if financial_health["available"]:
-
-    health_components = financial_health["components"]
-
-    health_context = f"""
-FINANCIAL HEALTH SCORE
-
-Score: {financial_health['score']}/100
-Rating: {financial_health['rating']}
-
-Component Breakdown:
-- Overall Budget Control:
-  {health_components['overall_budget_control']['score']}/40
-
-- Category Budget Control:
-  {
-      health_components['category_budget_control']['score']
-      if health_components['category_budget_control']['score'] is not None
-      else 'Not scored'
-  }/25
-
-- Spending Consistency:
-  {health_components['spending_consistency']['score']}/20
-
-- Budget Headroom:
-  {health_components['budget_headroom']['score']}/15
-
-Positive Factors:
-{chr(10).join(
-    f"- {factor}"
-    for factor in financial_health["positive_factors"]
-) or "- None"}
-
-Needs Attention:
-{chr(10).join(
-    f"- {factor}"
-    for factor in financial_health["attention_factors"]
-) or "- None"}
-
-IMPORTANT:
-The Financial Health Score is calculated deterministically by SpendWise.
-Do not recalculate, replace, or invent a different score.
-You may explain the score and suggest ways to improve it using the supplied financial data.
-"""
-
-else:
-
-    health_context = """
-FINANCIAL HEALTH SCORE
-
-Unavailable.
-
-Reason:
-The user has not configured the required monthly budget.
-
-Do not invent a Financial Health Score.
-"""
-
-#-------------------------
-# Financial Context for AI
-#-------------------------
-
-category_context = "\n".join(
-    f"- {category}: ₹{amount:.2f}"
-    for category, amount in category_totals.items()
+financial_context = build_ai_context(
+    current_month=current_month,
+    previous_month=previous_month,
+    monthly_budget=monthly_budget,
+    total_spent=total_spent,
+    previous_month_total=previous_month_total,
+    budget_left=budget_left,
+    budget_percentage=budget_percentage,
+    category_totals=category_totals,
+    category_budget_progress=category_budget_progress,
+    financial_health=financial_health,
+    monthly_expenses=monthly_expenses,
+    previous_month_expenses=previous_month_expenses,
+    recurring_expenses=recurring_expenses,
+    custom_categories=custom_categories,
+    today=today,
+    user_preferences=user_preferences,
 )
-
-financial_context = f"""
-CURRENT FINANCIAL SUMMARY
-
-Month: {current_month}
-Monthly Budget: ₹{monthly_budget:.2f}
-Total Spent: ₹{total_spent:.2f}
-Budget Remaining: ₹{budget_left:.2f}
-Budget Used: {budget_percentage:.1f}%
-
-CATEGORY SPENDING
-{category_context}
-
-CATEGORY BUDGETS:
-{category_budget_context_text}
-
-{health_context}
-
-Number of Transactions: {len(monthly_expenses)}
-"""
-
-#-------------------------
-# AI CHAT PANEL
-#-------------------------
-
-# -------------------------
-# SPENDWISE AI FINANCIAL CONTEXT
-# -------------------------
-
-financial_context += "\n\nCURRENT MONTH TRANSACTIONS"
-if monthly_expenses:
-    for expense in monthly_expenses:
-        financial_context += (
-            f"\n- {expense['name']} | "
-            f"{expense['category']} | "
-            f"₹{expense['amount']:.2f} | "
-            f"{expense['date']}"
-        )
-else:
-    financial_context += "\n- No transactions recorded this month."
 
 if st.session_state.chat_open:
 
     with st.container(key="spendwise_chat_panel"):
 
-        title_col, clear_col, close_col = st.columns([5, 1, 1])
+        # =========================
+        # FIXED COMPACT HEADER
+        # =========================
+
+        title_col, clear_col, close_col = st.columns([6, 1, 1])
 
         with title_col:
             st.markdown("### 🤖 Ask SpendWise")
@@ -702,56 +672,132 @@ if st.session_state.chat_open:
         with close_col:
             if st.button(
                 "✕",
-                key="close_spendwise_chat"
+                key="close_spendwise_chat",
+                help="Close chat"
             ):
                 st.session_state.chat_open = False
                 st.rerun()
 
-        st.caption(
-            "Ask anything about budgeting or personal expenses."
+        # =========================
+        # SCROLLABLE CHAT BODY
+        # =========================
+        # Messages + quick actions + input all live in ONE scrollable area.
+        # This guarantees the bottom controls are always reachable.
+
+        with st.container(
+            key="spendwise_chat_body",
+            height=485
+        ):
+            if st.session_state.chat_history:
+                for message in st.session_state.chat_history:
+                    with st.chat_message(message["role"]):
+                        st.write(message["content"])
+            else:
+                st.caption(
+                    "No messages yet. Ask a question or use a quick prompt below."
+                )
+
+            st.divider()
+
+            # -------------------------
+            # COMPACT QUICK PROMPTS
+            # -------------------------
+
+            quick_col1, quick_col2, quick_col3, quick_col4 = st.columns(4)
+
+            with quick_col1:
+                if st.button(
+                    "📊 Analyze",
+                    use_container_width=True,
+                    key="ai_quick_analyze"
+                ):
+                    st.session_state.ai_quick_prompt = (
+                        "Analyze my spending this month and tell me "
+                        "the most important things I should know."
+                    )
+
+            with quick_col2:
+                if st.button(
+                    "📈 Compare",
+                    use_container_width=True,
+                    key="ai_quick_compare"
+                ):
+                    st.session_state.ai_quick_prompt = (
+                        "Compare my spending this month with last month "
+                        "and explain the biggest changes."
+                    )
+
+            with quick_col3:
+                if st.button(
+                    "💰 Save?",
+                    use_container_width=True,
+                    key="ai_quick_save"
+                ):
+                    st.session_state.ai_quick_prompt = (
+                        "Based on my actual spending, "
+                        "where could I reduce expenses?"
+                    )
+
+            with quick_col4:
+                if st.button(
+                    "🛒 Afford?",
+                    use_container_width=True,
+                    key="ai_quick_afford"
+                ):
+                    st.session_state.ai_quick_prompt = (
+                        "Based on my current budget, how much could I "
+                        "reasonably afford to spend on an optional purchase?"
+                    )
+
+            quick_prompt = st.session_state.pop(
+                "ai_quick_prompt",
+                None
+            )
+
+            # -------------------------
+            # COMPACT MESSAGE INPUT
+            # -------------------------
+
+            with st.form(
+                "spendwise_chat_form",
+                clear_on_submit=True
+            ):
+                input_col, send_col = st.columns([5.5, 1.5])
+
+                with input_col:
+                    user_message = st.text_input(
+                        "Message",
+                        placeholder="Ask SpendWise...",
+                        label_visibility="collapsed"
+                    )
+
+                with send_col:
+                    send_message = st.form_submit_button(
+                        "Send",
+                        use_container_width=True
+                    )
+
+        # -------------------------
+        # ONE SHARED SEND PIPELINE
+        # -------------------------
+
+        message_to_send = (
+            quick_prompt
+            if quick_prompt
+            else user_message.strip()
         )
 
-        st.divider()
-
-
-        # Display previous messages
-        for message in st.session_state.chat_history:
-
-            with st.chat_message(message["role"]):
-                st.write(message["content"])
-
-
-        # Message input
-        with st.form(
-            "spendwise_chat_form",
-            clear_on_submit=True
-        ):
-
-            user_message = st.text_input(
-                "Message",
-                placeholder="Ask SpendWise...",
-                label_visibility="collapsed"
-            )
-
-            send_message = st.form_submit_button(
-                "Send ➤"
-            )
-
-
-        # Send to Gemini
-        if send_message and user_message.strip():
+        if message_to_send and (send_message or quick_prompt):
 
             with st.spinner("SpendWise is thinking..."):
-
                 try:
                     response = ask_ai(
-                        user_message,
+                        message_to_send,
                         financial_context,
                         st.session_state.chat_history
                     )
 
                 except Exception as error:
-
                     error_text = str(error)
 
                     if "429" in error_text or "RESOURCE_EXHAUSTED" in error_text:
@@ -772,18 +818,27 @@ if st.session_state.chat_open:
                             "Please try again."
                         )
 
-
             if not response or not response.strip():
                 response = (
                     "I couldn't generate a response for that. "
                     "Try asking it another way."
                 )
-            add_chat_message(user_id, "user", user_message)
-            add_chat_message(user_id, "assistant", response)
+
+            add_chat_message(
+                user_id,
+                "user",
+                message_to_send
+            )
+
+            add_chat_message(
+                user_id,
+                "assistant",
+                response
+            )
 
             st.session_state.chat_history.append({
                 "role": "user",
-                "content": user_message
+                "content": message_to_send
             })
 
             st.session_state.chat_history.append({
@@ -801,16 +856,23 @@ if st.session_state.chat_open:
 # -------------------------
 # FLOATING ASK SPENDWISE
 # -------------------------
+# FLOATING ASK SPENDWISE
+# -------------------------
+# FLOATING ASK SPENDWISE
+# -------------------------
+# FLOATING ASK SPENDWISE
+# -------------------------
 
-with st.container(key="floating_chat"):
+if not st.session_state.chat_open:
+    with st.container(key="floating_chat"):
 
-    if st.button(
-        "🤖",
-        key="open_spendwise_chat",
-        help="Ask SpendWise"
-    ):
-        st.session_state.chat_open = not st.session_state.chat_open
-        st.rerun()
+        if st.button(
+            "🤖",
+            key="open_spendwise_chat",
+            help="Ask SpendWise"
+        ):
+            st.session_state.chat_open = True
+            st.rerun()
 
 # -------------------------
 # MONTHLY SUMMARY PAGE
