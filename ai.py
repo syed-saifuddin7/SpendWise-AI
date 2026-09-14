@@ -1,5 +1,6 @@
 import streamlit as st
 from google import genai
+import json
 MODEL_NAME = "gemini-3.5-flash-lite"
 SYSTEM_PROMPT = """
 You are SpendWiseAI, the intelligent personal finance assistant built into
@@ -194,3 +195,152 @@ Format:
     )
 
     return response.text
+
+def parse_ai_action(
+    user_message,
+    financial_context,
+    chat_history
+):
+    """
+    Ask Gemini to classify a user message into a structured
+    SpendWise financial action.
+
+    This function only interprets intent.
+    It must never modify the database.
+    """
+
+    recent_history = chat_history[-10:]
+
+    prompt = f"""
+You are the intent parser for SpendWise AI.
+
+Your job is ONLY to interpret whether the user's latest message
+requests an expense-management action.
+
+Possible actions:
+
+1. add_expense
+2. edit_expense
+3. delete_expense
+4. search_expenses
+5. none
+
+Return ONLY valid JSON.
+Do not include markdown.
+Do not include explanations outside the JSON.
+
+CURRENT SPENDWISE FINANCIAL CONTEXT:
+{financial_context}
+
+RECENT CHAT HISTORY:
+{recent_history}
+
+USER MESSAGE:
+{user_message}
+
+JSON FORMAT:
+
+For add_expense:
+{{
+  "action": "add_expense",
+  "name": "expense name",
+  "amount": 0,
+  "category": "category",
+  "date": "YYYY-MM-DD",
+  "description": "",
+  "confidence": 0.0,
+  "needs_clarification": false,
+  "clarification_question": ""
+}}
+
+For edit_expense:
+{{
+  "action": "edit_expense",
+  "expense_id": null,
+  "changes": {{
+    "name": null,
+    "amount": null,
+    "category": null,
+    "date": null,
+    "description": null
+  }},
+  "reference": "how the user referred to the transaction",
+  "confidence": 0.0,
+  "needs_clarification": false,
+  "clarification_question": ""
+}}
+
+For delete_expense:
+{{
+  "action": "delete_expense",
+  "expense_id": null,
+  "reference": "how the user referred to the transaction",
+  "confidence": 0.0,
+  "needs_clarification": false,
+  "clarification_question": ""
+}}
+
+For search_expenses:
+{{
+  "action": "search_expenses",
+  "filters": {{
+    "name": null,
+    "category": null,
+    "date_from": null,
+    "date_to": null,
+    "min_amount": null,
+    "max_amount": null
+  }},
+  "confidence": 0.0,
+  "needs_clarification": false,
+  "clarification_question": ""
+}}
+
+For none:
+{{
+  "action": "none",
+  "confidence": 0.0,
+  "needs_clarification": false,
+  "clarification_question": ""
+}}
+
+RULES:
+- Never claim an action was executed.
+- Never modify data.
+- Use action "none" for normal financial advice/questions.
+- If required information is missing or ambiguous,
+  set needs_clarification to true.
+- Do not invent expense IDs.
+- Only include an expense_id if the supplied context clearly identifies one.
+- Use null when a value is unknown.
+- Confidence must be between 0 and 1.
+- When selecting a category, return only the category name.
+- Never include category emojis or icons in the category field.
+- Example: return "College", not "🏷️ College".
+- Prefer an existing built-in or custom category from the supplied context.
+- Do not invent a new category unless the user explicitly names one.
+"""
+
+    client = get_client()
+
+    response = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=prompt
+    )
+
+    raw_text = response.text.strip()
+
+    try:
+        parsed = json.loads(raw_text)
+
+    except json.JSONDecodeError:
+        return {
+            "action": "none",
+            "confidence": 0.0,
+            "needs_clarification": True,
+            "clarification_question": (
+                "I couldn't safely understand that financial action."
+            )
+        }
+
+    return parsed

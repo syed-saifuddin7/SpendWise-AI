@@ -16,8 +16,6 @@ from cloud_db import (
     delete_category,
     clear_chat_history,
     set_category_budget,
-    get_category_budgets,
-    delete_category_budget, 
     add_recurring_expense,
     get_recurring_expenses,
     update_recurring_expense,
@@ -26,8 +24,9 @@ from cloud_db import (
     process_due_recurring_expenses,
 )
 import calendar
+import re
 from datetime import date, timedelta
-from ai import ask_ai
+from ai import ask_ai, parse_ai_action
 from ai_context import build_ai_context
 from monthly_summary import render_monthly_summary
 from reports import render_reports
@@ -36,6 +35,17 @@ from auth import is_logged_in, sign_out
 from auth_ui import render_login, render_signup
 from supabase_client import get_supabase_client
 from financial_health import calculate_financial_health
+from ai_actions import (
+    validate_ai_action,
+    search_user_expenses,
+    prepare_edit_expense_action,
+    prepare_delete_expense_action,
+    resolve_ambiguity_followup,
+    normalize_expense_date,
+    normalize_expense_category,
+    validate_expense_ownership,
+    resolve_last_ai_expense,
+)
 
 st.set_page_config(
     page_title="SpendWise AI",
@@ -114,6 +124,26 @@ if "ai_recommendations" not in st.session_state:
     st.session_state.ai_recommendations = None
 if "chat_open" not in st.session_state:
     st.session_state.chat_open = False
+if "pending_ai_action" not in st.session_state:
+    st.session_state.pending_ai_action = None
+if "ai_action_confirmed" not in st.session_state:
+    st.session_state.ai_action_confirmed = False
+if "pending_ai_ambiguity" not in st.session_state:
+    st.session_state.pending_ai_ambiguity = None
+if "selected_ai_ambiguity_id" not in st.session_state:
+    st.session_state.selected_ai_ambiguity_id = None
+if "last_ai_expense" not in st.session_state:
+    st.session_state.last_ai_expense = None
+if "last_ai_expense_user_id" not in st.session_state:
+    st.session_state.last_ai_expense_user_id = user_id
+elif st.session_state.last_ai_expense_user_id != user_id:
+    # Never carry conversational transaction context across users.
+    st.session_state.last_ai_expense = None
+    st.session_state.pending_ai_action = None
+    st.session_state.pending_ai_ambiguity = None
+    st.session_state.selected_ai_ambiguity_id = None
+    st.session_state.ai_action_confirmed = False
+    st.session_state.last_ai_expense_user_id = user_id
 if "editing_category_id" not in st.session_state:
     st.session_state.editing_category_id = None
 if "category_budget_widget_version" not in st.session_state:
@@ -175,12 +205,12 @@ st.markdown("""
 
     /* =========================
        GLOBAL LAYOUT
-    ========================= */    
+    ========================= */
 
     .block-container {
         padding-top: 2rem;
     }
-    
+
     /* =========================
        FLOATING AI CHAT
     ========================= */
@@ -261,10 +291,10 @@ st.markdown("""
     }
 }
 
-    
+
     /* =========================
        METRICS & CONTAINERS
-    ========================= */    
+    ========================= */
 
     div[data-testid="stMetric"] {
         border-radius: 12px;
@@ -667,6 +697,11 @@ if st.session_state.chat_open:
             ):
                 clear_chat_history(user_id)
                 st.session_state.chat_history = []
+                st.session_state.last_ai_expense = None
+                st.session_state.pending_ai_action = None
+                st.session_state.pending_ai_ambiguity = None
+                st.session_state.selected_ai_ambiguity_id = None
+                st.session_state.ai_action_confirmed = False
                 st.rerun()
 
         with close_col:
@@ -698,6 +733,222 @@ if st.session_state.chat_open:
                 )
 
             st.divider()
+
+            # -------------------------
+            # AI ACTION CONFIRMATION
+            # -------------------------
+
+            if st.session_state.pending_ai_action:
+
+                pending_action = st.session_state.pending_ai_action
+
+                if pending_action.get("action") == "add_expense":
+
+                    with st.container(border=True):
+
+                        st.markdown("#### ➕ Add Expense")
+
+                        st.markdown(
+                            f"""
+**{pending_action['name']}**
+
+💰 **Amount:** ₹{float(pending_action['amount']):.2f}
+
+🏷️ **Category:** {pending_action['category']}
+
+📅 **Date:** {pending_action['date']}
+"""
+                        )
+
+                        description = (
+                            pending_action.get("description")
+                            or ""
+                        ).strip()
+
+                        if description:
+                            st.markdown(
+                                f"📝 **Description:** {description}"
+                            )
+
+                        st.caption(
+                            "Nothing will be added until you confirm."
+                        )
+
+                    confirm_col, cancel_col = st.columns(2)
+
+                    with confirm_col:
+                        if st.button(
+                            "✅ Confirm Add",
+                            key="confirm_ai_add_expense",
+                            use_container_width=True
+                        ):
+                            st.session_state.ai_action_confirmed = True
+
+                    with cancel_col:
+                        if st.button(
+                            "❌ Cancel",
+                            key="cancel_ai_add_expense",
+                            use_container_width=True
+                        ):
+                            st.session_state.pending_ai_action = None
+                            st.rerun()
+
+                elif pending_action.get("action") == "edit_expense":
+
+                    expense = pending_action["expense"]
+                    changes = pending_action["changes"]
+
+                    with st.container(border=True):
+
+                        st.markdown("#### ✏️ Edit Expense")
+
+                        st.markdown(
+                            f"""
+**{expense['name']}**
+
+💰 **Current Amount:** ₹{float(expense['amount']):.2f}
+
+🏷️ **Current Category:** {expense['category']}
+
+📅 **Current Date:** {expense['date']}
+"""
+                        )
+
+                        st.markdown("**Proposed changes:**")
+
+                        for field, new_value in changes.items():
+
+                            old_value = expense.get(field)
+
+                            if field == "amount":
+                                old_value = f"₹{float(old_value):.2f}"
+                                new_value = f"₹{float(new_value):.2f}"
+
+                            st.markdown(
+                                f"• **{field.title()}**: "
+                                f"{old_value} → **{new_value}**"
+                            )
+
+                        st.caption(
+                            "The expense will remain unchanged until you confirm."
+                        )
+
+                    confirm_col, cancel_col = st.columns(2)
+
+                    with confirm_col:
+                        if st.button(
+                            "✏️ Confirm Edit",
+                            key="confirm_ai_edit_expense",
+                            use_container_width=True
+                        ):
+                            st.session_state.ai_action_confirmed = True
+
+                    with cancel_col:
+                        if st.button(
+                            "❌ Cancel",
+                            key="cancel_ai_edit_expense",
+                            use_container_width=True
+                        ):
+                            st.session_state.pending_ai_action = None
+                            st.session_state.ai_action_confirmed = False
+                            st.rerun()
+
+                elif pending_action.get("action") == "delete_expense":
+
+                    expense = pending_action["expense"]
+
+                    with st.container(border=True):
+
+                        st.markdown("#### 🗑️ Delete Expense")
+
+                        st.markdown(
+                            f"""
+**{expense['name']}**
+
+💰 **Amount:** ₹{float(expense['amount']):.2f}
+
+🏷️ **Category:** {expense['category']}
+
+📅 **Date:** {expense['date']}
+"""
+                        )
+
+                        st.error(
+                            "⚠️ This permanently deletes the expense "
+                            "and cannot be undone."
+                        )
+
+                    confirm_col, cancel_col = st.columns(2)
+
+                    with confirm_col:
+                        if st.button(
+                            "🗑️ Confirm Delete",
+                            key="confirm_ai_delete_expense",
+                            use_container_width=True
+                        ):
+                            st.session_state.ai_action_confirmed = True
+
+                    with cancel_col:
+                        if st.button(
+                            "❌ Cancel",
+                            key="cancel_ai_delete_expense",
+                            use_container_width=True
+                        ):
+                            st.session_state.pending_ai_action = None
+                            st.session_state.ai_action_confirmed = False
+                            st.rerun()
+
+
+            # -------------------------
+            # AI AMBIGUITY SELECTION
+            # -------------------------
+
+            if st.session_state.pending_ai_ambiguity:
+
+                ambiguity = st.session_state.pending_ai_ambiguity
+                matches = ambiguity.get("matches", [])
+
+                if matches:
+
+                    with st.container(border=True):
+
+                        st.markdown("#### 🔎 Choose Transaction")
+                        st.caption(
+                            "I found multiple matching expenses. "
+                            "Choose the exact one you mean."
+                        )
+
+                        for index, expense in enumerate(matches[:10]):
+
+                            label = (
+                                f"{expense['name']} — "
+                                f"₹{float(expense['amount']):.2f} — "
+                                f"{expense['category']} — "
+                                f"{expense['date']}"
+                            )
+
+                            if st.button(
+                                label,
+                                key=(
+                                    f"ai_ambiguity_choice_"
+                                    f"{expense['id']}_{index}"
+                                ),
+                                use_container_width=True
+                            ):
+                                st.session_state.selected_ai_ambiguity_id = (
+                                    expense["id"]
+                                )
+                                st.rerun()
+
+                    if st.button(
+                        "❌ Cancel Selection",
+                        key="cancel_ai_ambiguity",
+                        use_container_width=True
+                    ):
+                        st.session_state.pending_ai_ambiguity = None
+                        st.session_state.selected_ai_ambiguity_id = None
+                        st.rerun()
+
 
             # -------------------------
             # COMPACT QUICK PROMPTS
@@ -762,6 +1013,7 @@ if st.session_state.chat_open:
                 "spendwise_chat_form",
                 clear_on_submit=True
             ):
+
                 input_col, send_col = st.columns([5.5, 1.5])
 
                 with input_col:
@@ -781,6 +1033,69 @@ if st.session_state.chat_open:
         # ONE SHARED SEND PIPELINE
         # -------------------------
 
+        # -------------------------
+        # CLICKED AMBIGUITY CHOICE
+        # -------------------------
+
+        if (
+            st.session_state.selected_ai_ambiguity_id is not None
+            and st.session_state.pending_ai_ambiguity
+        ):
+
+            ambiguity = st.session_state.pending_ai_ambiguity
+            selected_id = st.session_state.selected_ai_ambiguity_id
+
+            selected_expense = next(
+                (
+                    expense
+                    for expense in ambiguity.get("matches", [])
+                    if str(expense.get("id")) == str(selected_id)
+                ),
+                None
+            )
+
+            if selected_expense is not None:
+
+                original_action = ambiguity.get("original_action") or {}
+                ambiguity_action = ambiguity.get("action")
+
+                if ambiguity_action == "delete_expense":
+
+                    st.session_state.pending_ai_action = {
+                        "action": "delete_expense",
+                        "expense": selected_expense
+                    }
+
+                elif ambiguity_action == "edit_expense":
+
+                    changes = original_action.get("changes") or {}
+
+                    cleaned_changes = {
+                        key: value
+                        for key, value in changes.items()
+                        if value is not None
+                    }
+
+                    if cleaned_changes:
+                        st.session_state.pending_ai_action = {
+                            "action": "edit_expense",
+                            "expense": selected_expense,
+                            "changes": cleaned_changes
+                        }
+
+                st.session_state.pending_ai_ambiguity = None
+                st.session_state.selected_ai_ambiguity_id = None
+                st.rerun()
+
+            else:
+                # The selected ID was not one of the authenticated user's
+                # ambiguity candidates. Clear it safely without executing.
+                st.session_state.selected_ai_ambiguity_id = None
+                st.warning(
+                    "⚠️ That transaction is no longer available. "
+                    "Please choose again."
+                )
+
         message_to_send = (
             quick_prompt
             if quick_prompt
@@ -791,11 +1106,684 @@ if st.session_state.chat_open:
 
             with st.spinner("SpendWise is thinking..."):
                 try:
-                    response = ask_ai(
-                        message_to_send,
-                        financial_context,
-                        st.session_state.chat_history
-                    )
+                    if st.session_state.pending_ai_ambiguity:
+
+                        ambiguity = st.session_state.pending_ai_ambiguity
+
+                        ambiguity_result = resolve_ambiguity_followup(
+                            ambiguity["matches"],
+                            message_to_send
+                        )
+
+                        ambiguity_status = ambiguity_result.get("status")
+
+                        if ambiguity_status == "ready":
+
+                            selected_expense = ambiguity_result["expense"]
+                            original_action = ambiguity["original_action"]
+
+                            if ambiguity["action"] == "delete_expense":
+
+                                st.session_state.pending_ai_action = {
+                                    "action": "delete_expense",
+                                    "expense": selected_expense
+                                }
+
+                                response = (
+                                    f"I matched **{selected_expense['name']}**:\n\n"
+                                    f"Amount: ₹{float(selected_expense['amount']):.2f}\n\n"
+                                    f"Category: {selected_expense['category']}\n\n"
+                                    f"Date: {selected_expense['date']}\n\n"
+                                    "Confirm below if you want me to delete it."
+                                )
+
+                            elif ambiguity["action"] == "edit_expense":
+
+                                changes = (
+                                    original_action.get("changes")
+                                    or {}
+                                )
+
+                                cleaned_changes = {
+                                    key: value
+                                    for key, value in changes.items()
+                                    if value is not None
+                                }
+
+                                st.session_state.pending_ai_action = {
+                                    "action": "edit_expense",
+                                    "expense": selected_expense,
+                                    "changes": cleaned_changes
+                                }
+
+                                preview_lines = []
+
+                                for field, new_value in cleaned_changes.items():
+                                    old_value = selected_expense.get(field)
+
+                                    if field == "amount":
+                                        old_value = f"₹{float(old_value):.2f}"
+                                        new_value = f"₹{float(new_value):.2f}"
+
+                                    preview_lines.append(
+                                        f"• {field.title()}: "
+                                        f"{old_value} → {new_value}"
+                                    )
+
+                                response = (
+                                    f"I matched **{selected_expense['name']}**:\n\n"
+                                    + "\n".join(preview_lines)
+                                    + "\n\nConfirm below before I change anything."
+                                )
+
+                            else:
+                                response = (
+                                    "⚠️ I couldn't safely continue that pending action."
+                                )
+
+                            st.session_state.pending_ai_ambiguity = None
+
+                        elif ambiguity_status == "ambiguous":
+
+                            response = (
+                                "That still matches more than one expense. "
+                                "Please be more specific."
+                            )
+
+                        else:
+
+                            response = (
+                                "I couldn't match that reply to one of the expenses. "
+                                "Try saying the amount, date, or position, "
+                                "for example: 'the ₹699 one', "
+                                "'the second one', or 'the 2026-09-13 one'."
+                            )
+
+                    else:
+                        action = parse_ai_action(
+                            message_to_send,
+                            financial_context,
+                            st.session_state.chat_history
+                        )
+
+                        action_type = action.get("action", "none")
+
+                        # ---------------------------------
+                        # CONTEXTUAL EXPENSE REFERENCE
+                        # ---------------------------------
+
+                        normalized_message = (
+                            message_to_send.strip().lower()
+                        )
+
+                        contextual_reference_words = {
+                            "it",
+                            "that",
+                            "that expense",
+                            "that transaction",
+                        }
+
+                        uses_contextual_reference = (
+                            normalized_message in contextual_reference_words
+                            or " it " in f" {normalized_message} "
+                            or normalized_message.startswith("actually ")
+                            or normalized_message.startswith("change it")
+                            or normalized_message.startswith("edit it")
+                            or normalized_message.startswith("make it")
+                            or normalized_message.startswith("delete it")
+                            or normalized_message.startswith("remove it")
+                        )
+
+                        contextual_delete_request = (
+                            normalized_message.startswith("delete it")
+                            or normalized_message.startswith("remove it")
+                            or normalized_message in {
+                                "delete that",
+                                "remove that",
+                                "delete that expense",
+                                "remove that expense",
+                            }
+                        )
+
+                        contextual_edit_request = (
+                            normalized_message.startswith("actually ")
+                            or normalized_message.startswith("change it")
+                            or normalized_message.startswith("edit it")
+                            or normalized_message.startswith("make it")
+                        )
+
+                        contextual_action_request = (
+                            uses_contextual_reference
+                            and (
+                                contextual_delete_request
+                                or contextual_edit_request
+                            )
+                        )
+
+                        contextual_prehandled = False
+
+                        # Deterministic guardrail before generic AI fallback.
+                        # This prevents stale chatbot text such as
+                        # "financial actions are not enabled" for commands like
+                        # "Delete it" after a confirmed deletion.
+                        if contextual_action_request:
+
+                            if not st.session_state.last_ai_expense:
+                                response = (
+                                    "I don't have a recent AI expense to refer to. "
+                                    "Please name the transaction you want to change or delete."
+                                )
+                                contextual_prehandled = True
+
+                            elif st.session_state.last_ai_expense.get("deleted"):
+                                response = (
+                                    "⚠️ That expense was already deleted. "
+                                    "Please name another transaction if you want to continue."
+                                )
+                                contextual_prehandled = True
+
+                        # If Gemini classifies a clear contextual CRUD command as
+                        # action=none, rescue the intent locally instead of sending
+                        # it to the general financial chatbot.
+                        if (
+                            not contextual_prehandled
+                            and contextual_delete_request
+                            and action_type == "none"
+                        ):
+                            action = {
+                                "action": "delete_expense",
+                                "reference": "it",
+                                "needs_clarification": False,
+                            }
+                            action_type = "delete_expense"
+
+                        if (
+                            not contextual_prehandled
+                            and contextual_edit_request
+                            and action_type == "none"
+                        ):
+                            amount_match = re.search(
+                                r"(?:₹|rs\.?|inr)?\s*(\d+(?:\.\d+)?)",
+                                normalized_message,
+                                flags=re.IGNORECASE,
+                            )
+
+                            if amount_match:
+                                action = {
+                                    "action": "edit_expense",
+                                    "reference": "it",
+                                    "changes": {
+                                        "amount": float(amount_match.group(1))
+                                    },
+                                    "needs_clarification": False,
+                                }
+                                action_type = "edit_expense"
+                            else:
+                                response = (
+                                    "What would you like to change about that expense?"
+                                )
+                                contextual_prehandled = True
+
+                        # ---------------------------------
+                        # ADD EXPENSE
+                        # ---------------------------------
+
+                        if contextual_prehandled:
+                            pass
+
+                        elif action_type == "add_expense":
+
+                            if action.get("needs_clarification"):
+                                response = (
+                                    action.get("clarification_question")
+                                    or "I need a little more information before I can add that expense."
+                                )
+
+                            else:
+                                # -------------------------
+                                # NORMALIZE CATEGORY
+                                # -------------------------
+
+                                category_result = normalize_expense_category(
+                                    action.get("category"),
+                                    custom_categories
+                                )
+
+                                if category_result.get("status") != "ready":
+                                    response = (
+                                        "⚠️ I couldn't safely prepare that expense. "
+                                        f"{category_result.get('message')}"
+                                    )
+
+                                else:
+                                    action["category"] = category_result["category"]
+
+                                    # -------------------------
+                                    # NORMALIZE DATE
+                                    # -------------------------
+
+                                    date_result = normalize_expense_date(
+                                        action.get("date"),
+                                        today=today
+                                    )
+
+                                    if date_result.get("status") != "ready":
+                                        response = (
+                                            "⚠️ I couldn't safely prepare that expense. "
+                                            f"{date_result.get('message')}"
+                                        )
+
+                                    else:
+                                        action["date"] = date_result["date"]
+
+                                        # -------------------------
+                                        # FINAL VALIDATION
+                                        # -------------------------
+
+                                        is_valid, validation_error = validate_ai_action(
+                                            action
+                                        )
+
+                                        if not is_valid:
+                                            response = (
+                                                "⚠️ I couldn't safely prepare that expense. "
+                                                f"{validation_error}"
+                                            )
+
+                                        else:
+                                            st.session_state.pending_ai_action = action
+
+                                            response = (
+                                                "I prepared this expense for confirmation:\n\n"
+                                                f"**{action['name']}**\n\n"
+                                                f"Amount: ₹{float(action['amount']):.2f}\n\n"
+                                                f"Category: {action['category']}\n\n"
+                                                f"Date: {action['date']}\n\n"
+                                                "Confirm it below before I add anything."
+                                            )
+
+                        # ---------------------------------
+                        # EDIT EXPENSE
+                        # ---------------------------------
+
+                        elif action_type == "edit_expense":
+
+                            changes = action.get("changes") or {}
+                            contextual_expense = None
+                            contextual_blocked = False
+
+                            if uses_contextual_reference:
+                                context_result = resolve_last_ai_expense(
+                                    expenses,
+                                    st.session_state.last_ai_expense
+                                )
+
+                                context_status = context_result.get("status")
+
+                                if context_status == "ready":
+                                    contextual_expense = context_result["expense"]
+
+                                elif context_status == "ambiguous":
+                                    st.session_state.pending_ai_ambiguity = {
+                                        "action": "edit_expense",
+                                        "original_action": action,
+                                        "matches": context_result.get("matches", [])
+                                    }
+                                    response = (
+                                        context_result.get("message")
+                                        or "I found multiple matching recent expenses. "
+                                        "Please choose the exact one."
+                                    )
+                                    contextual_blocked = True
+
+                                else:
+                                    response = (
+                                        context_result.get("message")
+                                        or "I couldn't safely resolve what 'it' refers to."
+                                    )
+                                    contextual_blocked = True
+
+                            has_usable_changes = any(
+                                value is not None
+                                for value in changes.values()
+                            )
+
+                            has_reference = (
+                                bool(action.get("reference"))
+                                or contextual_expense is not None
+                            )
+
+                            if contextual_blocked:
+                                pass
+
+                            elif not has_reference or not has_usable_changes:
+                                response = (
+                                    action.get("clarification_question")
+                                    or "I need more information before I can edit that expense."
+                                )
+
+                            else:
+
+                                normalization_error = None
+
+                                # -------------------------
+                                # NORMALIZE CATEGORY CHANGE
+                                # -------------------------
+
+                                if changes.get("category") is not None:
+
+                                    category_result = normalize_expense_category(
+                                        changes.get("category"),
+                                        custom_categories
+                                    )
+
+                                    if category_result.get("status") != "ready":
+                                        normalization_error = (
+                                            category_result.get("message")
+                                            or "Invalid category."
+                                        )
+                                    else:
+                                        action["changes"]["category"] = (
+                                            category_result["category"]
+                                        )
+
+                                # -------------------------
+                                # NORMALIZE DATE CHANGE
+                                # -------------------------
+
+                                if (
+                                    normalization_error is None
+                                    and changes.get("date") is not None
+                                ):
+
+                                    date_result = normalize_expense_date(
+                                        changes.get("date"),
+                                        today=today
+                                    )
+
+                                    if date_result.get("status") != "ready":
+                                        normalization_error = (
+                                            date_result.get("message")
+                                            or "Invalid date."
+                                        )
+                                    else:
+                                        action["changes"]["date"] = (
+                                            date_result["date"]
+                                        )
+
+                                # -------------------------
+                                # CONTINUE EDIT FLOW
+                                # -------------------------
+
+                                if normalization_error is not None:
+                                    response = (
+                                        "⚠️ I couldn't safely prepare that edit. "
+                                        f"{normalization_error}"
+                                    )
+
+                                else:
+                                    if contextual_expense is not None:
+                                        edit_result = {
+                                            "status": "ready",
+                                            "expense": contextual_expense,
+                                            "changes": {
+                                                key: value
+                                                for key, value in action.get(
+                                                    "changes",
+                                                    {}
+                                                ).items()
+                                                if value is not None
+                                            }
+                                        }
+                                    else:
+                                        edit_result = prepare_edit_expense_action(
+                                            expenses,
+                                            action
+                                        )
+
+                                    status = edit_result.get("status")
+
+                                    if status == "not_found":
+                                        response = edit_result["message"]
+
+                                    elif status == "ambiguous":
+                                        matches = edit_result.get("matches", [])
+
+                                        st.session_state.pending_ai_ambiguity = {
+                                            "action": "edit_expense",
+                                            "original_action": action,
+                                            "matches": matches
+                                        }
+
+                                        result_lines = []
+
+                                        for expense in matches[:10]:
+                                            result_lines.append(
+                                                f"• {expense['name']} — "
+                                                f"₹{float(expense['amount']):.2f} — "
+                                                f"{expense['category']} — "
+                                                f"{expense['date']}"
+                                            )
+
+                                        response = (
+                                            "I found multiple matching expenses:\n\n"
+                                            + "\n".join(result_lines)
+                                            + "\n\nPlease tell me which one you mean."
+                                        )
+
+                                    elif status == "invalid":
+                                        response = (
+                                            "⚠️ I couldn't safely prepare that edit. "
+                                            f"{edit_result['message']}"
+                                        )
+
+                                    elif status == "ready":
+                                        expense = edit_result["expense"]
+                                        changes = edit_result["changes"]
+
+                                        st.session_state.pending_ai_action = {
+                                            "action": "edit_expense",
+                                            "expense": expense,
+                                            "changes": changes
+                                        }
+
+                                        preview_lines = []
+
+                                        for field, new_value in changes.items():
+
+                                            old_value = expense.get(field)
+
+                                            if field == "amount":
+                                                old_value = (
+                                                    f"₹{float(old_value):.2f}"
+                                                )
+                                                new_value = (
+                                                    f"₹{float(new_value):.2f}"
+                                                )
+
+                                            preview_lines.append(
+                                                f"• {field.title()}: "
+                                                f"{old_value} → {new_value}"
+                                            )
+
+                                        response = (
+                                            f"I prepared an edit for **{expense['name']}**:\n\n"
+                                            + "\n".join(preview_lines)
+                                            + "\n\nConfirm below before I change anything."
+                                        )
+
+                                    else:
+                                        response = (
+                                            "⚠️ I couldn't safely prepare that edit."
+                                        )
+
+                        # ---------------------------------
+                        # DELETE EXPENSE
+                        # ---------------------------------
+
+                        elif action_type == "delete_expense":
+
+                            if uses_contextual_reference:
+                                context_result = resolve_last_ai_expense(
+                                    expenses,
+                                    st.session_state.last_ai_expense
+                                )
+
+                                context_status = context_result.get("status")
+
+                                if context_status == "ready":
+                                    delete_result = {
+                                        "status": "ready",
+                                        "expense": context_result["expense"]
+                                    }
+
+                                elif context_status == "ambiguous":
+                                    delete_result = {
+                                        "status": "ambiguous",
+                                        "matches": context_result.get("matches", []),
+                                        "message": context_result.get(
+                                            "message",
+                                            "I found multiple matching recent expenses."
+                                        )
+                                    }
+
+                                else:
+                                    delete_result = {
+                                        "status": "not_found",
+                                        "message": context_result.get(
+                                            "message",
+                                            "That recent expense could not be found."
+                                        )
+                                    }
+                            else:
+                                delete_result = prepare_delete_expense_action(
+                                    expenses,
+                                    action
+                                )
+
+                            status = delete_result.get("status")
+
+                            if status == "not_found":
+                                response = delete_result["message"]
+
+                            elif status == "ambiguous":
+                                matches = delete_result.get("matches", [])
+                                st.session_state.pending_ai_ambiguity = {
+                                    "action": "delete_expense",
+                                    "original_action": action,
+                                    "matches": matches
+                                }
+                                result_lines = []
+
+                                for expense in matches[:10]:
+                                    result_lines.append(
+                                        f"• {expense['name']} — "
+                                        f"₹{float(expense['amount']):.2f} — "
+                                        f"{expense['category']} — "
+                                        f"{expense['date']}"
+                                    )
+
+                                response = (
+                                    "I found multiple matching expenses:\n\n"
+                                    + "\n".join(result_lines)
+                                    + "\n\nPlease tell me which one you mean."
+                                )
+
+                            elif status == "invalid":
+                                response = (
+                                    "⚠️ I couldn't safely prepare that deletion. "
+                                    f"{delete_result['message']}"
+                                )
+
+                            elif status == "ready":
+                                expense = delete_result["expense"]
+
+                                st.session_state.pending_ai_action = {
+                                    "action": "delete_expense",
+                                    "expense": expense
+                                }
+
+                                response = (
+                                    f"I found **{expense['name']}**:\n\n"
+                                    f"Amount: ₹{float(expense['amount']):.2f}\n\n"
+                                    f"Category: {expense['category']}\n\n"
+                                    f"Date: {expense['date']}\n\n"
+                                    "This will permanently delete the expense. "
+                                    "Confirm below if you really want to continue."
+                                )
+
+                        # ---------------------------------
+                        # SEARCH EXPENSES
+                        # ---------------------------------
+
+                        elif action_type == "search_expenses":
+
+                            if action.get("needs_clarification"):
+                                response = (
+                                    action.get("clarification_question")
+                                    or "I need a little more information to search safely."
+                                )
+
+                            else:
+                                is_valid, validation_error = validate_ai_action(
+                                    action
+                                )
+
+                                if not is_valid:
+                                    response = (
+                                        "⚠️ I couldn't safely run that search. "
+                                        f"{validation_error}"
+                                    )
+
+                                else:
+                                    search_results = search_user_expenses(
+                                        expenses,
+                                        action.get("filters", {})
+                                    )
+
+                                    if not search_results:
+                                        response = (
+                                            "I couldn't find any expenses matching that search."
+                                        )
+
+                                    else:
+                                        result_lines = []
+
+                                        total_amount = sum(
+                                            float(expense["amount"])
+                                            for expense in search_results
+                                        )
+
+                                        for expense in search_results[:20]:
+                                            result_lines.append(
+                                                f"• {expense['name']} — "
+                                                f"₹{float(expense['amount']):.2f} — "
+                                                f"{expense['category']} — "
+                                                f"{expense['date']}"
+                                            )
+
+                                        response = (
+                                            f"🔎 Found {len(search_results)} matching "
+                                            f"expense{'s' if len(search_results) != 1 else ''}.\n\n"
+                                            f"💰 **Total:** ₹{total_amount:.2f}\n\n"
+                                            + "\n".join(result_lines)
+                                        )
+
+                                        if len(search_results) > 20:
+                                            response += (
+                                                "\n\nShowing the first 20 results."
+                                            )
+
+                        # ---------------------------------
+                        # EVERYTHING ELSE
+                        # ---------------------------------
+
+                        else:
+                            response = ask_ai(
+                                message_to_send,
+                                financial_context,
+                                st.session_state.chat_history
+                            )
 
                 except Exception as error:
                     error_text = str(error)
@@ -853,12 +1841,271 @@ if st.session_state.chat_open:
 
             st.rerun()
 
+
 # -------------------------
-# FLOATING ASK SPENDWISE
+# EXECUTE CONFIRMED AI ACTION
 # -------------------------
-# FLOATING ASK SPENDWISE
-# -------------------------
-# FLOATING ASK SPENDWISE
+
+if (
+    st.session_state.ai_action_confirmed
+    and st.session_state.pending_ai_action
+):
+
+    pending_action = st.session_state.pending_ai_action
+
+    if pending_action.get("action") == "add_expense":
+
+        is_valid, validation_error = validate_ai_action(
+            pending_action
+        )
+
+        if not is_valid:
+            st.session_state.ai_action_confirmed = False
+            st.session_state.pending_ai_action = None
+
+            st.error(
+                "⚠️ The AI-prepared expense failed validation. "
+                f"{validation_error}"
+            )
+
+        else:
+            category_name = pending_action["category"]
+
+            category_id = None
+
+            for custom_category in custom_categories:
+                if custom_category["name"] == category_name:
+                    category_id = custom_category["id"]
+                    break
+
+            add_expense(
+                user_id,
+                pending_action["name"].strip(),
+                float(pending_action["amount"]),
+                category_name,
+                date.fromisoformat(
+                    pending_action["date"]
+                ),
+                (
+                    pending_action.get("description")
+                    or ""
+                ).strip(),
+                category_id
+            )
+
+            st.session_state.last_ai_expense = {
+                "name": pending_action["name"].strip(),
+                "amount": float(pending_action["amount"]),
+                "category": category_name,
+                "date": pending_action["date"],
+                "description": (
+                    pending_action.get("description")
+                    or ""
+                ).strip(),
+            }
+
+            success_message = (
+                "✅ Expense added successfully.\n\n"
+                f"**{pending_action['name']}**\n\n"
+                f"💰 Amount: ₹{float(pending_action['amount']):.2f}\n\n"
+                f"🏷️ Category: {category_name}\n\n"
+                f"📅 Date: {pending_action['date']}"
+            )
+
+            add_chat_message(
+                user_id,
+                "assistant",
+                success_message
+            )
+
+            st.session_state.chat_history.append({
+                "role": "assistant",
+                "content": success_message
+            })
+
+            st.session_state.pending_ai_action = None
+            st.session_state.ai_action_confirmed = False
+
+            st.rerun()
+
+    elif pending_action.get("action") == "edit_expense":
+
+        expense = pending_action["expense"]
+        changes = pending_action["changes"]
+        ownership_result = validate_expense_ownership(
+            expenses,
+            expense.get("id")
+        )
+
+        if ownership_result.get("status") != "ready":
+
+            st.session_state.pending_ai_action = None
+            st.session_state.ai_action_confirmed = False
+
+            st.error(
+                "⚠️ I couldn't safely edit that expense. "
+                f"{ownership_result.get('message')}"
+            )
+
+        else:
+            expense = ownership_result["expense"]
+            # Rebuild the final expense safely from:
+            # existing values + only the approved changes.
+            updated_name = changes.get(
+                "name",
+                expense["name"]
+            )
+
+            updated_amount = float(
+                changes.get(
+                    "amount",
+                    expense["amount"]
+                )
+            )
+
+            updated_category = changes.get(
+                "category",
+                expense["category"]
+            )
+
+            updated_date = changes.get(
+                "date",
+                expense["date"]
+            )
+
+            updated_description = changes.get(
+                "description",
+                expense.get("description") or ""
+            )
+
+            category_id = None
+
+            for custom_category in custom_categories:
+                if custom_category["name"] == updated_category:
+                    category_id = custom_category["id"]
+                    break
+
+            update_expense(
+                user_id,
+                expense["id"],
+                updated_name,
+                updated_amount,
+                updated_category,
+                date.fromisoformat(updated_date),
+                updated_description,
+                category_id
+            )
+
+            st.session_state.last_ai_expense = {
+                "id": expense["id"],
+                "name": updated_name,
+                "amount": updated_amount,
+                "category": updated_category,
+                "date": updated_date,
+                "description": updated_description,
+            }
+
+            change_lines = []
+
+            for field, new_value in changes.items():
+
+                old_value = expense.get(field)
+
+                if field == "amount":
+                    old_value = f"₹{float(old_value):.2f}"
+                    new_value = f"₹{float(new_value):.2f}"
+
+                change_lines.append(
+                    f"• **{field.title()}**: "
+                    f"{old_value} → {new_value}"
+                )
+
+            success_message = (
+                "✅ Expense updated successfully.\n\n"
+                f"**{updated_name}**\n\n"
+                + "\n".join(change_lines)
+            )
+
+            add_chat_message(
+                user_id,
+                "assistant",
+                success_message
+            )
+
+            st.session_state.chat_history.append({
+                "role": "assistant",
+                "content": success_message
+            })
+
+            st.session_state.pending_ai_action = None
+            st.session_state.ai_action_confirmed = False
+
+            st.rerun()
+
+    elif pending_action.get("action") == "delete_expense":
+
+        expense = pending_action["expense"]
+
+        # Safety check:
+        # only allow deletion if this expense still exists
+        # in the authenticated user's loaded expense list.
+        ownership_result = validate_expense_ownership(
+            expenses,
+            expense.get("id")
+        )
+
+        if ownership_result.get("status") != "ready":
+
+            st.session_state.pending_ai_action = None
+            st.session_state.ai_action_confirmed = False
+
+            st.error(
+                "⚠️ I couldn't safely delete that expense. "
+                f"{ownership_result.get('message')}"
+            )
+
+        else:
+            expense = ownership_result["expense"]
+
+            delete_expense(
+                user_id,
+                expense["id"]
+            )
+
+            st.session_state.last_ai_expense = {
+                "id": expense["id"],
+                "name": expense["name"],
+                "amount": float(expense["amount"]),
+                "category": expense["category"],
+                "date": expense["date"],
+                "description": expense.get("description") or "",
+                "deleted": True,
+            }
+
+            success_message = (
+                "✅ Expense deleted successfully.\n\n"
+                f"**{expense['name']}**\n\n"
+                f"💰 Amount: ₹{float(expense['amount']):.2f}\n\n"
+                f"🏷️ Category: {expense['category']}\n\n"
+                f"📅 Date: {expense['date']}"
+            )
+
+            add_chat_message(
+                user_id,
+                "assistant",
+                success_message
+            )
+
+            st.session_state.chat_history.append({
+                "role": "assistant",
+                "content": success_message
+            })
+
+            st.session_state.pending_ai_action = None
+            st.session_state.ai_action_confirmed = False
+
+            st.rerun()
+
 # -------------------------
 # FLOATING ASK SPENDWISE
 # -------------------------
@@ -1081,7 +2328,7 @@ st.divider()
 st.subheader("💵 Monthly Budget")
 
 with st.container(key="monthly_budget_controls"):
-    
+
     budget_col1, budget_col2, budget_col3 = st.columns(
         [3, 1, 5]
     )
@@ -1536,9 +2783,12 @@ if recurring_expenses:
         with info_col:
             st.markdown(
                     f"""
-                **{recurring['name']}**  
-                ₹{float(recurring['amount']):,.2f} • {recurring['category']}  
-                {recurring['frequency'].title()} • {status}  
+                **{recurring['name']}**
+
+                ₹{float(recurring['amount']):,.2f} • {recurring['category']}
+
+                {recurring['frequency'].title()} • {status}
+
                 Next run: {recurring['next_run_date']}
                 """
             )
@@ -1928,7 +3178,7 @@ with st.expander("🏷️ Manage Custom Categories"):
 
             if cancel_edit:
                 st.session_state.editing_category_id = None
-                st.rerun()      
+                st.rerun()
     else:
         st.info("You haven't created any custom categories yet.")
 
@@ -2058,7 +3308,7 @@ st.divider()
 st.subheader("📋 Transactions")
 
 #-------------------------
-# HEADERS 
+# HEADERS
 #-------------------------
 
 st.markdown("""
@@ -2232,4 +3482,3 @@ if st.session_state.editing_id is not None:
                 st.rerun()
         if edit_error:
             st.warning(edit_error)
-
