@@ -1,6 +1,7 @@
 import streamlit as st
 from cloud_db import (
     add_expense,
+    import_expenses,
     delete_category_budget,
     get_category_budgets,
     get_expenses,
@@ -35,6 +36,7 @@ from auth import is_logged_in, sign_out
 from auth_ui import render_login, render_signup
 from supabase_client import get_supabase_client
 from financial_health import calculate_financial_health
+from csv_import import parse_and_validate_csv, build_import_records
 from ai_actions import (
     validate_ai_action,
     search_user_expenses,
@@ -143,11 +145,20 @@ elif st.session_state.last_ai_expense_user_id != user_id:
     st.session_state.pending_ai_ambiguity = None
     st.session_state.selected_ai_ambiguity_id = None
     st.session_state.ai_action_confirmed = False
+    st.session_state.csv_import_preview = None
+    st.session_state.csv_import_filename = None
+    st.session_state.csv_import_result = None
     st.session_state.last_ai_expense_user_id = user_id
 if "editing_category_id" not in st.session_state:
     st.session_state.editing_category_id = None
 if "category_budget_widget_version" not in st.session_state:
     st.session_state.category_budget_widget_version = 0
+if "csv_import_preview" not in st.session_state:
+    st.session_state.csv_import_preview = None
+if "csv_import_filename" not in st.session_state:
+    st.session_state.csv_import_filename = None
+if "csv_import_result" not in st.session_state:
+    st.session_state.csv_import_result = None
 
 # -----------------------------
 # AUTHENTICATED USER DATA
@@ -2616,6 +2627,196 @@ if submitted:
         )
 
         st.rerun()
+
+# -------------------------
+# CSV IMPORT
+# -------------------------
+
+st.divider()
+st.subheader("📄 Import Expenses from CSV")
+
+if st.session_state.csv_import_result:
+    st.success(st.session_state.csv_import_result)
+    st.session_state.csv_import_result = None
+
+with st.expander("Upload CSV", expanded=False):
+    st.caption(
+        "Required columns: name, amount, category, date. "
+        "Optional column: description."
+    )
+    st.caption(
+        "Accepted dates: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD. "
+        "Existing built-in and custom categories are supported."
+    )
+
+    csv_template = (
+        "name,amount,category,date,description\n"
+        "Lunch,250,Food,2026-09-25,College lunch\n"
+        "Metro,40,Travel,25/09/2026,College travel\n"
+    )
+
+    st.download_button(
+        "⬇️ Download CSV Template",
+        data=csv_template,
+        file_name="spendwise_import_template.csv",
+        mime="text/csv",
+        key="download_csv_template"
+    )
+
+    uploaded_csv = st.file_uploader(
+        "Choose a CSV file",
+        type=["csv"],
+        key="expense_csv_uploader"
+    )
+
+    if uploaded_csv is not None:
+        if st.button(
+            "🔍 Validate & Preview",
+            key="validate_csv_import",
+            use_container_width=True
+        ):
+            csv_result = parse_and_validate_csv(
+                uploaded_csv.getvalue(),
+                custom_categories,
+                expenses
+            )
+            st.session_state.csv_import_preview = csv_result
+            st.session_state.csv_import_filename = uploaded_csv.name
+
+    csv_preview = st.session_state.csv_import_preview
+
+    if csv_preview is not None:
+        if csv_preview.get("error"):
+            st.error(f"⚠️ {csv_preview['error']}")
+        else:
+            valid_rows = csv_preview.get("valid_rows", [])
+            invalid_rows = csv_preview.get("invalid_rows", [])
+            duplicate_rows = csv_preview.get("duplicate_rows", [])
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("CSV Rows", csv_preview.get("total_rows", 0))
+            c2.metric("Ready to Import", len(valid_rows))
+            c3.metric("Invalid", len(invalid_rows))
+            c4.metric("Duplicates", len(duplicate_rows))
+
+            if csv_preview.get("extra_columns"):
+                st.info(
+                    "Extra columns will be ignored: "
+                    + ", ".join(csv_preview["extra_columns"])
+                )
+
+            if valid_rows:
+                import_total = sum(float(row["amount"]) for row in valid_rows)
+                st.markdown(f"**Import total:** ₹{import_total:.2f}")
+                st.markdown("#### ✅ Valid rows")
+                st.dataframe(
+                    [{
+                        "Row": row["row"],
+                        "Name": row["name"],
+                        "Amount": row["amount"],
+                        "Category": row["category"],
+                        "Date": row["date"],
+                        "Description": row["description"],
+                    } for row in valid_rows],
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+            if invalid_rows:
+                st.markdown("#### ⚠️ Invalid rows")
+                st.dataframe(
+                    [{
+                        "Row": row["row"],
+                        "Name": row["name"],
+                        "Amount": row["amount"],
+                        "Category": row["category"],
+                        "Date": row["date"],
+                        "Reason": row["reason"],
+                    } for row in invalid_rows],
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+            if duplicate_rows:
+                st.markdown("#### ♻️ Duplicate rows — will be skipped")
+                st.dataframe(
+                    [{
+                        "Row": row["row"],
+                        "Name": row["name"],
+                        "Amount": row["amount"],
+                        "Category": row["category"],
+                        "Date": row["date"],
+                        "Reason": row["reason"],
+                    } for row in duplicate_rows],
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+            if valid_rows:
+                st.warning(
+                    "Nothing is written to the database until you confirm. "
+                    "Invalid and duplicate rows will not be imported."
+                )
+                confirm_col, cancel_col = st.columns(2)
+                with confirm_col:
+                    confirm_csv_import = st.button(
+                        f"✅ Confirm Import ({len(valid_rows)})",
+                        key="confirm_csv_import",
+                        use_container_width=True
+                    )
+                with cancel_col:
+                    cancel_csv_import = st.button(
+                        "❌ Cancel",
+                        key="cancel_csv_import",
+                        use_container_width=True
+                    )
+
+                if confirm_csv_import:
+                    records = build_import_records(user_id, valid_rows)
+                    try:
+                        imported_rows = import_expenses(user_id, records)
+                        imported_count = len(imported_rows or [])
+                        if imported_count != len(records):
+                            st.warning(
+                                f"Import returned {imported_count} saved rows for "
+                                f"{len(records)} requested rows. Please review transactions."
+                            )
+                        else:
+                            st.session_state.csv_import_result = (
+                                f"Imported {imported_count} expense"
+                                f"{'s' if imported_count != 1 else ''}. "
+                                f"Skipped {len(invalid_rows)} invalid and "
+                                f"{len(duplicate_rows)} duplicate row"
+                                f"{'s' if len(duplicate_rows) != 1 else ''}."
+                            )
+                        st.session_state.csv_import_preview = None
+                        st.session_state.csv_import_filename = None
+                        st.rerun()
+                    except Exception:
+                        st.error(
+                            "⚠️ The import failed. No retry was performed automatically. "
+                            "Please review the file and try again."
+                        )
+
+                if cancel_csv_import:
+                    st.session_state.csv_import_preview = None
+                    st.session_state.csv_import_filename = None
+                    st.rerun()
+
+            elif invalid_rows or duplicate_rows:
+                st.info(
+                    "There are no new valid expenses to import. "
+                    "Fix invalid rows or remove duplicates and upload again."
+                )
+                if st.button(
+                    "Clear Import Preview",
+                    key="clear_csv_import_preview",
+                    use_container_width=True
+                ):
+                    st.session_state.csv_import_preview = None
+                    st.session_state.csv_import_filename = None
+                    st.rerun()
+
 
 # -------------------------
 # RECURRING EXPENSES

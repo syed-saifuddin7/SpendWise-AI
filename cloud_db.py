@@ -29,6 +29,35 @@ def add_expense(user_id,name,amount,category,date,description,category_id=None):
 
     return response.data
 
+def import_expenses(user_id, records):
+    """Import already validated expense rows for one authenticated user."""
+    if not records:
+        return []
+
+    supabase = get_supabase_client()
+    data = []
+
+    for record in records:
+        data.append({
+            "user_id": user_id,
+            "name": record["name"],
+            "amount": float(record["amount"]),
+            "category": record["category"],
+            "date": str(record["date"]),
+            "description": record.get("description", ""),
+            "category_id": record.get("category_id")
+        })
+
+    response = (
+        supabase
+        .table("expenses")
+        .insert(data)
+        .execute()
+    )
+
+    return response.data
+
+
 def get_expenses(user_id):
     supabase = get_supabase_client()
 
