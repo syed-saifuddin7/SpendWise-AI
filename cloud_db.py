@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import supabase
 
 from supabase_client import get_supabase_client
@@ -613,3 +614,126 @@ def process_due_recurring_expenses(user_id):
         }).eq("id", recurring["id"]).execute()
 
     return created_count
+
+
+# =========================
+# USER SETTINGS
+# =========================
+
+def get_user_settings(user_id):
+    """Get the authenticated user's settings."""
+
+    supabase = get_supabase_client()
+
+    response = (
+        supabase
+        .table("user_settings")
+        .select("*")
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+
+    if response.data:
+        return response.data[0]
+
+    return None
+
+
+def create_user_settings(
+    user_id,
+    display_name=None,
+    currency="INR"
+):
+    """Create settings for the authenticated user."""
+
+    supabase = get_supabase_client()
+
+    data = {
+        "user_id": user_id,
+        "display_name": display_name,
+        "currency": currency
+    }
+
+    response = (
+        supabase
+        .table("user_settings")
+        .insert(data)
+        .execute()
+    )
+
+    if response.data:
+        return response.data[0]
+
+    return None
+
+
+def update_user_settings(
+    user_id,
+    display_name,
+    currency,
+    default_monthly_budget=0,
+    ai_response_style="Balanced",
+    ai_proactive_tips=True,
+):
+    """Update only the authenticated user's settings."""
+
+    supabase = get_supabase_client()
+
+    data = {
+        "display_name": display_name,
+        "currency": currency,
+        "default_monthly_budget": float(default_monthly_budget or 0),
+        "ai_response_style": ai_response_style,
+        "ai_proactive_tips": bool(ai_proactive_tips),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    response = (
+        supabase
+        .table("user_settings")
+        .update(data)
+        .eq("user_id", user_id)
+        .execute()
+    )
+
+    if response.data:
+        return response.data[0]
+
+    return None
+
+
+def export_user_data(user_id):
+    """Return a user-scoped snapshot of SpendWise application data."""
+    supabase = get_supabase_client()
+    tables = (
+        "expenses",
+        "budgets",
+        "category_budgets",
+        "categories",
+        "recurring_expenses",
+        "chat_history",
+        "user_settings",
+    )
+    exported = {}
+    for table_name in tables:
+        response = (
+            supabase.table(table_name)
+            .select("*")
+            .eq("user_id", user_id)
+            .execute()
+        )
+        exported[table_name] = response.data or []
+    return exported
+
+
+def delete_own_account(user_id):
+    """Delete the currently authenticated account through the trusted DB RPC."""
+    supabase = get_supabase_client()
+    current = supabase.auth.get_user()
+    current_user_id = str(current.user.id) if current and current.user else None
+    if not current_user_id or current_user_id != str(user_id):
+        raise PermissionError("Authenticated user does not match the requested account.")
+
+    response = supabase.rpc("delete_own_account").execute()
+    return response.data

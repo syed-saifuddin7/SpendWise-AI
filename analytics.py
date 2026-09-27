@@ -15,7 +15,8 @@ def render_analytics(
     category_totals,
     financial_context,
     monthly_budget,
-    category_budget_progress
+    category_budget_progress,
+    currency_symbol="₹"
 ):
     # =========================================================
     # ANALYTICS V2 — DATA FOUNDATION
@@ -233,13 +234,13 @@ def render_analytics(
         if month_change_percentage is None:
             st.metric(
                 current_month_label,
-                f"₹{current_month_total:.2f}",
+                f"{currency_symbol}{current_month_total:.2f}",
                 delta="No previous-month baseline"
             )
         else:
             st.metric(
                 current_month_label,
-                f"₹{current_month_total:.2f}",
+                f"{currency_symbol}{current_month_total:.2f}",
                 delta=f"{month_change_percentage:+.1f}% vs previous month",
                 delta_color="inverse"
             )
@@ -247,7 +248,7 @@ def render_analytics(
     with compare_col2:
         st.metric(
             previous_month_label,
-            f"₹{previous_month_total:.2f}"
+            f"{currency_symbol}{previous_month_total:.2f}"
         )
 
     # =========================================================
@@ -262,7 +263,7 @@ def render_analytics(
     with quick_col1:
         st.metric(
             "📆 Average Daily Spending",
-            f"₹{average_daily_spending:.2f} / day"
+            f"{currency_symbol}{average_daily_spending:.2f} / day"
         )
 
     with quick_col2:
@@ -271,7 +272,7 @@ def render_analytics(
                 "🏆 Top Spending Category",
                 top_category,
                 delta=(
-                    f"₹{top_category_amount:.2f} • "
+                    f"{currency_symbol}{top_category_amount:.2f} • "
                     f"{top_category_share:.1f}% of spending"
                 ),
                 delta_color="off"
@@ -293,7 +294,7 @@ def render_analytics(
         for expense in largest_expenses:
             st.write(
                 f"**{expense['name']}** — "
-                f"₹{float(expense['amount']):.2f} "
+                f"{currency_symbol}{float(expense['amount']):.2f} "
                 f"({expense['category']})"
             )
     else:
@@ -329,7 +330,7 @@ def render_analytics(
             ),
             y=alt.Y(
                 "Amount:Q",
-                title="Amount Spent (₹)"
+                title="Amount Spent"
             ),
             tooltip=[
                 "Week:N",
@@ -369,24 +370,24 @@ def render_analytics(
         with budget_col1:
             st.metric(
                 "Monthly Budget",
-                f"₹{overall_budget:.2f}"
+                f"{currency_symbol}{overall_budget:.2f}"
             )
 
         with budget_col2:
             st.metric(
                 "Actual Spending",
-                f"₹{current_month_total:.2f}",
+                f"{currency_symbol}{current_month_total:.2f}",
                 delta=f"{budget_used_percentage:.1f}% used",
                 delta_color="off"
             )
 
         if budget_remaining >= 0:
             st.caption(
-                f"₹{budget_remaining:.2f} budget remaining"
+                f"{currency_symbol}{budget_remaining:.2f} budget remaining"
             )
         else:
             st.warning(
-                f"Budget exceeded by ₹{abs(budget_remaining):.2f}"
+                f"Budget exceeded by {currency_symbol}{abs(budget_remaining):.2f}"
             )
     else:
         st.info(
@@ -407,8 +408,8 @@ def render_analytics(
             )
 
             st.write(
-                f"₹{item['spent']:.2f} / "
-                f"₹{item['budget']:.2f} "
+                f"{currency_symbol}{item['spent']:.2f} / "
+                f"{currency_symbol}{item['budget']:.2f} "
                 f"({item['percentage']:.1f}% used)"
             )
 
@@ -448,7 +449,7 @@ def render_analytics(
     with recurring_col:
         st.metric(
             "Recurring",
-            f"₹{recurring_spending:.2f}",
+            f"{currency_symbol}{recurring_spending:.2f}",
             delta=f"{recurring_share:.1f}% of spending",
             delta_color="off"
         )
@@ -456,7 +457,7 @@ def render_analytics(
     with discretionary_col:
         st.metric(
             "Discretionary",
-            f"₹{discretionary_spending:.2f}",
+            f"{currency_symbol}{discretionary_spending:.2f}",
             delta=f"{discretionary_share:.1f}% of spending",
             delta_color="off"
         )
@@ -495,7 +496,7 @@ def render_analytics(
             ),
             y=alt.Y(
                 "Amount:Q",
-                title="Amount Spent (₹)"
+                title="Amount Spent"
             ),
             tooltip=[
                 "Category:N",
@@ -558,7 +559,7 @@ def render_analytics(
                 ),
                 y=alt.Y(
                     "amount:Q",
-                    title="Amount Spent (₹)"
+                    title="Amount Spent"
                 ),
                 tooltip=[
                     alt.Tooltip(

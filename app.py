@@ -23,6 +23,8 @@ from cloud_db import (
     set_recurring_expense_active,
     delete_recurring_expense,
     process_due_recurring_expenses,
+    get_user_settings,
+    create_user_settings,
 )
 import calendar
 import re
@@ -37,6 +39,7 @@ from auth_ui import render_login, render_signup
 from supabase_client import get_supabase_client
 from financial_health import calculate_financial_health
 from csv_import import parse_and_validate_csv, build_import_records
+from settings import render_settings, currency_symbol
 from ai_actions import (
     validate_ai_action,
     search_user_expenses,
@@ -89,6 +92,15 @@ if not is_logged_in():
 auth_user = st.session_state.get("auth_user", {})
 user_id = auth_user["id"]
 custom_categories = get_categories(user_id)
+user_settings = get_user_settings(user_id)
+if user_settings is None:
+    user_settings = create_user_settings(user_id) or {
+        "currency": "INR",
+        "ai_response_style": "Balanced",
+        "ai_proactive_tips": True,
+    }
+user_currency = user_settings.get("currency", "INR")
+money_symbol = currency_symbol(user_currency)
 
 # -------------------------
 # CATEGORY ICONS
@@ -200,6 +212,14 @@ monthly_budget = get_budget(
     user_id,
     current_month
 )
+
+# Apply the saved default budget when a new month has no budget yet.
+default_monthly_budget = float(
+    user_settings.get("default_monthly_budget") or 0
+)
+if monthly_budget <= 0 and default_monthly_budget > 0:
+    set_budget(user_id, current_month, default_monthly_budget)
+    monthly_budget = default_monthly_budget
 
 category_budgets = get_category_budgets(
     user_id,
@@ -494,6 +514,7 @@ dashboard_class = "active" if page == "dashboard" else ""
 analytics_class = "active" if page == "analytics" else ""
 monthly_class = "active" if page == "monthly" else ""
 reports_class = "active" if page == "reports" else ""
+settings_class = "active" if page == "settings" else ""
 
 st.markdown(f"""
 <style>
@@ -595,6 +616,7 @@ st.markdown(f"""
 <a class="{analytics_class}" href="?page=analytics" target="_self">📊 Analytics</a>
 <a class="{monthly_class}" href="?page=monthly" target="_self">📅 Monthly Summary</a>
 <a class="{reports_class}" href="?page=reports" target="_self">📄 Reports</a>
+<a class="{settings_class}" href="?page=settings" target="_self">⚙️ Settings</a>
 <a class="logout-link" href="?logout=1" target="_self">🚪 Logout</a>
 </div>
 """, unsafe_allow_html=True)
@@ -659,7 +681,10 @@ for category_name, budget_amount in category_budget_map.items():
 st.title("💰 SpendWise AI")
 
 user_preferences = {
-    "currency": "INR"
+    "currency": user_currency,
+    "currency_symbol": money_symbol,
+    "ai_response_style": user_settings.get("ai_response_style", "Balanced"),
+    "ai_proactive_tips": bool(user_settings.get("ai_proactive_tips", True)),
 }
 
 financial_health = calculate_financial_health(
@@ -763,7 +788,7 @@ if st.session_state.chat_open:
                             f"""
 **{pending_action['name']}**
 
-💰 **Amount:** ₹{float(pending_action['amount']):.2f}
+💰 **Amount:** {money_symbol}{float(pending_action['amount']):.2f}
 
 🏷️ **Category:** {pending_action['category']}
 
@@ -817,7 +842,7 @@ if st.session_state.chat_open:
                             f"""
 **{expense['name']}**
 
-💰 **Current Amount:** ₹{float(expense['amount']):.2f}
+💰 **Current Amount:** {money_symbol}{float(expense['amount']):.2f}
 
 🏷️ **Current Category:** {expense['category']}
 
@@ -832,8 +857,8 @@ if st.session_state.chat_open:
                             old_value = expense.get(field)
 
                             if field == "amount":
-                                old_value = f"₹{float(old_value):.2f}"
-                                new_value = f"₹{float(new_value):.2f}"
+                                old_value = f"{money_symbol}{float(old_value):.2f}"
+                                new_value = f"{money_symbol}{float(new_value):.2f}"
 
                             st.markdown(
                                 f"• **{field.title()}**: "
@@ -876,7 +901,7 @@ if st.session_state.chat_open:
                             f"""
 **{expense['name']}**
 
-💰 **Amount:** ₹{float(expense['amount']):.2f}
+💰 **Amount:** {money_symbol}{float(expense['amount']):.2f}
 
 🏷️ **Category:** {expense['category']}
 
@@ -933,7 +958,7 @@ if st.session_state.chat_open:
 
                             label = (
                                 f"{expense['name']} — "
-                                f"₹{float(expense['amount']):.2f} — "
+                                f"{money_symbol}{float(expense['amount']):.2f} — "
                                 f"{expense['category']} — "
                                 f"{expense['date']}"
                             )
@@ -1142,7 +1167,7 @@ if st.session_state.chat_open:
 
                                 response = (
                                     f"I matched **{selected_expense['name']}**:\n\n"
-                                    f"Amount: ₹{float(selected_expense['amount']):.2f}\n\n"
+                                    f"Amount: {money_symbol}{float(selected_expense['amount']):.2f}\n\n"
                                     f"Category: {selected_expense['category']}\n\n"
                                     f"Date: {selected_expense['date']}\n\n"
                                     "Confirm below if you want me to delete it."
@@ -1173,8 +1198,8 @@ if st.session_state.chat_open:
                                     old_value = selected_expense.get(field)
 
                                     if field == "amount":
-                                        old_value = f"₹{float(old_value):.2f}"
-                                        new_value = f"₹{float(new_value):.2f}"
+                                        old_value = f"{money_symbol}{float(old_value):.2f}"
+                                        new_value = f"{money_symbol}{float(new_value):.2f}"
 
                                     preview_lines.append(
                                         f"• {field.title()}: "
@@ -1407,7 +1432,7 @@ if st.session_state.chat_open:
                                             response = (
                                                 "I prepared this expense for confirmation:\n\n"
                                                 f"**{action['name']}**\n\n"
-                                                f"Amount: ₹{float(action['amount']):.2f}\n\n"
+                                                f"Amount: {money_symbol}{float(action['amount']):.2f}\n\n"
                                                 f"Category: {action['category']}\n\n"
                                                 f"Date: {action['date']}\n\n"
                                                 "Confirm it below before I add anything."
@@ -1571,7 +1596,7 @@ if st.session_state.chat_open:
                                         for expense in matches[:10]:
                                             result_lines.append(
                                                 f"• {expense['name']} — "
-                                                f"₹{float(expense['amount']):.2f} — "
+                                                f"{money_symbol}{float(expense['amount']):.2f} — "
                                                 f"{expense['category']} — "
                                                 f"{expense['date']}"
                                             )
@@ -1606,10 +1631,10 @@ if st.session_state.chat_open:
 
                                             if field == "amount":
                                                 old_value = (
-                                                    f"₹{float(old_value):.2f}"
+                                                    f"{money_symbol}{float(old_value):.2f}"
                                                 )
                                                 new_value = (
-                                                    f"₹{float(new_value):.2f}"
+                                                    f"{money_symbol}{float(new_value):.2f}"
                                                 )
 
                                             preview_lines.append(
@@ -1689,7 +1714,7 @@ if st.session_state.chat_open:
                                 for expense in matches[:10]:
                                     result_lines.append(
                                         f"• {expense['name']} — "
-                                        f"₹{float(expense['amount']):.2f} — "
+                                        f"{money_symbol}{float(expense['amount']):.2f} — "
                                         f"{expense['category']} — "
                                         f"{expense['date']}"
                                     )
@@ -1716,7 +1741,7 @@ if st.session_state.chat_open:
 
                                 response = (
                                     f"I found **{expense['name']}**:\n\n"
-                                    f"Amount: ₹{float(expense['amount']):.2f}\n\n"
+                                    f"Amount: {money_symbol}{float(expense['amount']):.2f}\n\n"
                                     f"Category: {expense['category']}\n\n"
                                     f"Date: {expense['date']}\n\n"
                                     "This will permanently delete the expense. "
@@ -1768,7 +1793,7 @@ if st.session_state.chat_open:
                                         for expense in search_results[:20]:
                                             result_lines.append(
                                                 f"• {expense['name']} — "
-                                                f"₹{float(expense['amount']):.2f} — "
+                                                f"{money_symbol}{float(expense['amount']):.2f} — "
                                                 f"{expense['category']} — "
                                                 f"{expense['date']}"
                                             )
@@ -1776,7 +1801,7 @@ if st.session_state.chat_open:
                                         response = (
                                             f"🔎 Found {len(search_results)} matching "
                                             f"expense{'s' if len(search_results) != 1 else ''}.\n\n"
-                                            f"💰 **Total:** ₹{total_amount:.2f}\n\n"
+                                            f"💰 **Total:** {money_symbol}{total_amount:.2f}\n\n"
                                             + "\n".join(result_lines)
                                         )
 
@@ -1918,7 +1943,7 @@ if (
             success_message = (
                 "✅ Expense added successfully.\n\n"
                 f"**{pending_action['name']}**\n\n"
-                f"💰 Amount: ₹{float(pending_action['amount']):.2f}\n\n"
+                f"💰 Amount: {money_symbol}{float(pending_action['amount']):.2f}\n\n"
                 f"🏷️ Category: {category_name}\n\n"
                 f"📅 Date: {pending_action['date']}"
             )
@@ -2023,8 +2048,8 @@ if (
                 old_value = expense.get(field)
 
                 if field == "amount":
-                    old_value = f"₹{float(old_value):.2f}"
-                    new_value = f"₹{float(new_value):.2f}"
+                    old_value = f"{money_symbol}{float(old_value):.2f}"
+                    new_value = f"{money_symbol}{float(new_value):.2f}"
 
                 change_lines.append(
                     f"• **{field.title()}**: "
@@ -2096,7 +2121,7 @@ if (
             success_message = (
                 "✅ Expense deleted successfully.\n\n"
                 f"**{expense['name']}**\n\n"
-                f"💰 Amount: ₹{float(expense['amount']):.2f}\n\n"
+                f"💰 Amount: {money_symbol}{float(expense['amount']):.2f}\n\n"
                 f"🏷️ Category: {expense['category']}\n\n"
                 f"📅 Date: {expense['date']}"
             )
@@ -2138,7 +2163,7 @@ if not st.session_state.chat_open:
 
 if page == "monthly":
 
-    render_monthly_summary(expenses)
+    render_monthly_summary(expenses, money_symbol)
 
     st.stop()
 
@@ -2149,7 +2174,7 @@ if page == "monthly":
 
 if page == "reports":
 
-    render_reports(expenses)
+    render_reports(expenses, user_currency)
 
     st.stop()
 
@@ -2166,10 +2191,25 @@ if page == "analytics":
         category_totals,
         financial_context,
         monthly_budget,
-        category_budget_progress
+        category_budget_progress,
+        money_symbol
     )
 
     st.stop()
+
+# -------------------------
+# SETTINGS PAGE
+# -------------------------
+
+if page == "settings":
+    render_settings(
+        user_id,
+        auth_user,
+        current_month,
+        monthly_budget,
+    )
+    st.stop()
+
 
 # -------------------------
 # DASHBOARD
@@ -2187,13 +2227,13 @@ with st.container(key="dashboard_metrics"):
     with col1:
         st.metric(
             "💸 Total Spent",
-            f"₹{total_spent:.2f}"
+            f"{money_symbol}{total_spent:.2f}"
         )
 
     with col2:
         st.metric(
             "💵 Budget Left",
-            f"₹{budget_left:.2f}"
+            f"{money_symbol}{budget_left:.2f}"
         )
 
     with col3:
@@ -2218,8 +2258,8 @@ if monthly_budget > 0:
     st.progress(progress_value)
 
     st.write(
-        f"₹{total_spent:.2f} spent of "
-        f"₹{monthly_budget:.2f} "
+        f"{money_symbol}{total_spent:.2f} spent of "
+        f"{money_symbol}{monthly_budget:.2f} "
         f"({budget_percentage:.1f}%)"
     )
 
@@ -2245,7 +2285,7 @@ if monthly_budget > 0:
         exceeded_amount = total_spent - monthly_budget
 
         st.error(
-            f"🚨 Budget exceeded by ₹{exceeded_amount:.2f}!"
+            f"🚨 Budget exceeded by {money_symbol}{exceeded_amount:.2f}!"
         )
 
 #-------------------------
@@ -2346,7 +2386,7 @@ with st.container(key="monthly_budget_controls"):
 
     with budget_col1:
         budget_amount = st.number_input(
-            "Set Monthly Budget (₹)",
+            "Set Monthly Budget",
             min_value=0.0,
             value=float(monthly_budget),
             step=500.0
@@ -2361,7 +2401,7 @@ with st.container(key="monthly_budget_controls"):
             key="save_budget_button"
         ):
             if budget_amount <= 0:
-                budget_error = "Monthly budget must be greater than ₹0."
+                budget_error = "Monthly budget must be greater than 0 in your selected currency."
 
             else:
                 set_budget(
@@ -2399,7 +2439,7 @@ if category_budget_progress:
         )
 
         st.write(
-            f"₹{spent:,.0f} / ₹{budget:,.0f}"
+            f"{money_symbol}{spent:,.0f} / {money_symbol}{budget:,.0f}"
         )
 
         # Streamlit progress must stay between 0 and 1
@@ -2459,7 +2499,7 @@ with st.expander("⚙️ Manage Category Budgets"):
     )
 
     category_budget_amount = st.number_input(
-        "Monthly Category Budget (₹)",
+        "Monthly Category Budget",
         min_value=0.0,
         value=float(existing_budget),
         step=500.0,
@@ -2491,7 +2531,7 @@ with st.expander("⚙️ Manage Category Budgets"):
 
         if category_budget_amount <= 0:
             st.warning(
-                "Category budget must be greater than ₹0."
+                "Category budget must be greater than 0 in your selected currency."
             )
 
         else:
@@ -2553,7 +2593,7 @@ with st.form("add_expense_form"):
 
     with row1_col2:
         amount = st.number_input(
-            "Amount (₹)",
+            "Amount",
             min_value=0.0,
             step=10.0
         )
@@ -2613,7 +2653,7 @@ if submitted:
         st.warning("Please enter an expense name.")
 
     elif amount <= 0:
-        st.warning("Expense amount must be greater than ₹0.")
+        st.warning("Expense amount must be greater than 0 in your selected currency.")
 
     else:
         add_expense(
@@ -2707,7 +2747,7 @@ with st.expander("Upload CSV", expanded=False):
 
             if valid_rows:
                 import_total = sum(float(row["amount"]) for row in valid_rows)
-                st.markdown(f"**Import total:** ₹{import_total:.2f}")
+                st.markdown(f"**Import total:** {money_symbol}{import_total:.2f}")
                 st.markdown("#### ✅ Valid rows")
                 st.dataframe(
                     [{
@@ -2839,7 +2879,7 @@ with st.expander("➕ Add Recurring Expense"):
 
         with recurring_col2:
             recurring_amount = st.number_input(
-                "Recurring Amount (₹)",
+                "Recurring Amount",
                 min_value=0.0,
                 step=10.0
             )
@@ -2908,7 +2948,7 @@ with st.expander("➕ Add Recurring Expense"):
                 st.error("Please enter a recurring expense name.")
 
             elif recurring_amount <= 0:
-                st.error("Recurring amount must be greater than ₹0.")
+                st.error("Recurring amount must be greater than 0 in your selected currency.")
 
             else:
                 # Calculate the next occurrence after the start date.
@@ -2986,7 +3026,7 @@ if recurring_expenses:
                     f"""
                 **{recurring['name']}**
 
-                ₹{float(recurring['amount']):,.2f} • {recurring['category']}
+                {money_symbol}{float(recurring['amount']):,.2f} • {recurring['category']}
 
                 {recurring['frequency'].title()} • {status}
 
@@ -3074,7 +3114,7 @@ if recurring_expenses:
                 )
 
                 edit_amount = st.number_input(
-                    "Amount (₹)",
+                    "Amount",
                     min_value=0.0,
                     value=float(recurring["amount"]),
                     step=10.0,
@@ -3151,7 +3191,7 @@ if recurring_expenses:
                         st.error("Please enter a recurring expense name.")
 
                     elif edit_amount <= 0:
-                        st.error("Recurring amount must be greater than ₹0.")
+                        st.error("Recurring amount must be greater than 0 in your selected currency.")
 
                     else:
                         if edit_frequency == "weekly":
@@ -3448,7 +3488,7 @@ if start_date > end_date:
     st.warning("From Date cannot be after To Date.")
 with amount_col1:
     min_amount = st.number_input(
-        "Minimum Amount (₹)",
+        "Minimum Amount",
         min_value=0.0,
         value=0.0,
         step=100.0
@@ -3456,7 +3496,7 @@ with amount_col1:
 
 with amount_col2:
     max_amount = st.number_input(
-        "Maximum Amount (₹)",
+        "Maximum Amount",
         min_value=0.0,
         value=float(default_max_amount),
         step=100.0
@@ -3547,7 +3587,7 @@ with st.container(key="transactions_table"):
                 )
 
             with col3:
-                st.write(f"₹{expense['amount']:.2f}")
+                st.write(f"{money_symbol}{expense['amount']:.2f}")
 
             with col4:
                 formatted_date = date.fromisoformat(
@@ -3602,7 +3642,7 @@ if st.session_state.editing_id is not None:
         )
 
         edited_amount = st.number_input(
-            "Edit Amount (₹)",
+            "Edit Amount",
             min_value=0.0,
             value=float(expense["amount"]),
             step=10.0
@@ -3660,7 +3700,7 @@ if st.session_state.editing_id is not None:
                     edit_error = "Please enter an expense name."
 
                 elif edited_amount <= 0:
-                    edit_error = "Expense amount must be greater than ₹0."
+                    edit_error = "Expense amount must be greater than 0 in your selected currency."
 
                 else:
                     update_expense(

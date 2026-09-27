@@ -2,7 +2,7 @@ import streamlit as st
 from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
 
-def render_monthly_summary(expenses):
+def render_monthly_summary(expenses, currency_symbol="₹"):
 
     st.divider()
     st.title("📅 Monthly Spending Summary")
@@ -44,7 +44,7 @@ def render_monthly_summary(expenses):
     st.caption(
         f"Summary for {selected_month_name}"
     )
-    
+
     selected_month_expenses = [
         expense
         for expense in expenses
@@ -123,7 +123,7 @@ def render_monthly_summary(expenses):
         with metric_col1:
             st.metric(
                 "💸 Total Spent",
-                f"₹{selected_total:.2f}"
+                f"{currency_symbol}{selected_total:.2f}"
             )
 
         with metric_col2:
@@ -135,7 +135,7 @@ def render_monthly_summary(expenses):
         with metric_col3:
             st.metric(
                 "📊 Average Expense",
-                f"₹{average_expense:.2f}"
+                f"{currency_symbol}{average_expense:.2f}"
             )
 
         with metric_col4:
@@ -164,7 +164,7 @@ def render_monthly_summary(expenses):
         with comparison_col1:
             st.metric(
                 f"Previous Month ({previous_month_name})",
-                f"₹{previous_total:.2f}"
+                f"{currency_symbol}{previous_total:.2f}"
             )
 
         with comparison_col2:
@@ -174,7 +174,7 @@ def render_monthly_summary(expenses):
                 f"{abs(spending_change):.1f}%",
                 delta=(
                     f"{spending_change:+.1f}%"
-                )       
+                )
             )
 
     st.divider()
@@ -189,7 +189,7 @@ def render_monthly_summary(expenses):
         "Bills": "💡",
         "Health": "❤️",
         "Other": "📦"
-    }   
+    }
 
     rank_icons = {
         1: "🥇",
@@ -233,7 +233,7 @@ def render_monthly_summary(expenses):
 
             with amount_col:
                 st.markdown(
-                    f"**₹{total:.2f}**"
+                    f"**{currency_symbol}{total:.2f}**"
                 )
 
             progress_value = (

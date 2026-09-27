@@ -20,7 +20,7 @@ from reportlab.platypus import (
 # PDF GENERATOR
 # -------------------------
 
-def generate_pdf_report(expenses):
+def generate_pdf_report(expenses, currency_code="INR"):
 
     buffer = BytesIO()
 
@@ -97,7 +97,7 @@ def generate_pdf_report(expenses):
     elements.append(Spacer(1, 8))
 
     summary_data = [
-        ["Total Spent", f"Rs. {total_spent:.2f}"],
+        ["Total Spent", f"{currency_code} {total_spent:.2f}"],
         ["Transactions", str(transaction_count)]
     ]
 
@@ -188,7 +188,7 @@ def generate_pdf_report(expenses):
     ):
         category_data.append([
             category,
-            f"Rs. {total:.2f}"
+            f"{currency_code} {total:.2f}"
         ])
 
     category_table = Table(
@@ -382,7 +382,7 @@ def generate_pdf_report(expenses):
 # REPORT UI
 # -------------------------
 
-def render_reports(expenses):
+def render_reports(expenses, currency_code="INR"):
 
     st.divider()
     st.title("📄 SpendWise Reports")
@@ -421,7 +421,7 @@ def render_reports(expenses):
         for expense in expenses
         if expense["date"].startswith(selected_report_month)
     ]
-    
+
     if not report_expenses:
         st.info("No expenses available for the selected month.")
         return
@@ -495,7 +495,7 @@ def render_reports(expenses):
 
         st.download_button(
             label="📄 Download PDF Report",
-            data=generate_pdf_report(report_expenses),
+            data=generate_pdf_report(report_expenses, currency_code),
             file_name=(
                 f"spendwise_{report_month_name}_expense_report.pdf"
             ),
