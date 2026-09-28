@@ -54,7 +54,7 @@ from ai_actions import (
 
 st.set_page_config(
     page_title="SpendWise AI",
-    page_icon="static/icon-192.png",
+    page_icon="💰",
     layout="wide"
 )
 
@@ -496,130 +496,100 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-if st.query_params.get("logout") == "1":
+# -------------------------
+# PAGE ROUTING / NAVIGATION
+# -------------------------
+# Keep page changes inside the current Streamlit session.
+# Normal HTML href navigation can create a new Streamlit browser session,
+# which loses the in-memory authenticated session and forces a new login.
+VALID_PAGES = {"dashboard", "analytics", "monthly", "reports", "settings"}
+
+if "current_page" not in st.session_state:
+    requested_page = st.query_params.get("page", "dashboard")
+    st.session_state.current_page = (
+        requested_page if requested_page in VALID_PAGES else "dashboard"
+    )
+
+def navigate_to(target_page):
+    if target_page not in VALID_PAGES:
+        target_page = "dashboard"
+    st.session_state.current_page = target_page
+    # Keep the URL useful for orientation without navigating the browser away.
+    st.query_params["page"] = target_page
+
+def logout_current_user():
     sign_out()
     st.query_params.clear()
-    st.rerun()
 
-# -------------------------
-# PAGE ROUTING
-# -------------------------
+page = st.session_state.current_page
 
-page = st.query_params.get(
-    "page",
-    "dashboard"
-)
-
-dashboard_class = "active" if page == "dashboard" else ""
-analytics_class = "active" if page == "analytics" else ""
-monthly_class = "active" if page == "monthly" else ""
-reports_class = "active" if page == "reports" else ""
-settings_class = "active" if page == "settings" else ""
-
-st.markdown(f"""
+# Preserve the existing responsive rules that are unrelated to the old
+# HTML-link navbar.
+st.markdown("""
 <style>
-
-/* =========================
-   NAVBAR
-========================= */
-
-.spendwise-navbar {{
-    position: fixed;
-    top: 12px;
-    left: 12px;
-    right: 85px;
-    z-index: 999999;
-
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}}
-
-.spendwise-navbar a {{
-    color: #fafafa !important;
-    text-decoration: none !important;
-
-    padding: 7px 12px;
-    border-radius: 7px;
-
-    font-size: 14px;
-    font-weight: 500;
-
-    transition: background 0.2s ease;
-}}
-
-.spendwise-navbar a:hover {{
-    background: rgba(255, 255, 255, 0.10);
-}}
-
-.spendwise-navbar a.active {{
-    background: rgba(255, 255, 255, 0.10);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-}}
-
-/* =========================
-   RESPONSIVE — <= 900px
-========================= */
-
-@media (max-width: 900px) {{
-
-    /* Monthly budget */
+@media (max-width: 900px) {
     .st-key-monthly_budget_controls
-    div[data-testid="stHorizontalBlock"] {{
+    div[data-testid="stHorizontalBlock"] {
         flex-wrap: wrap !important;
-    }}
+    }
 
     .st-key-monthly_budget_controls
-    div[data-testid="stColumn"] {{
+    div[data-testid="stColumn"] {
         flex: 1 1 100% !important;
         width: 100% !important;
         min-width: 100% !important;
-    }}
+    }
 
-    .st-key-monthly_budget_controls button {{
+    .st-key-monthly_budget_controls button {
         width: auto !important;
         white-space: nowrap !important;
-    }}
+    }
 
-    /* Navbar */
-    .spendwise-navbar {{
-        left: 12px;
-        right: auto;
-        gap: 4px;
-        flex-wrap: wrap;
-        max-width: calc(100vw - 150px);
-    }}
-
-    .spendwise-navbar a {{
-        padding: 5px 7px;
-        font-size: 12px;
-    }}
-
-    /* Monthly summary metrics */
     .st-key-monthly_summary_metrics
-    div[data-testid="stHorizontalBlock"] {{
+    div[data-testid="stHorizontalBlock"] {
         flex-wrap: wrap !important;
-    }}
+    }
 
     .st-key-monthly_summary_metrics
-    div[data-testid="stColumn"] {{
+    div[data-testid="stColumn"] {
         flex: 1 1 calc(50% - 1rem) !important;
         width: calc(50% - 1rem) !important;
         min-width: calc(50% - 1rem) !important;
-    }}
-}}
-
+    }
+}
 </style>
-
-<div class="spendwise-navbar">
-<a class="{dashboard_class}" href="?page=dashboard" target="_self">🏠 Dashboard</a>
-<a class="{analytics_class}" href="?page=analytics" target="_self">📊 Analytics</a>
-<a class="{monthly_class}" href="?page=monthly" target="_self">📅 Monthly Summary</a>
-<a class="{reports_class}" href="?page=reports" target="_self">📄 Reports</a>
-<a class="{settings_class}" href="?page=settings" target="_self">⚙️ Settings</a>
-<a class="logout-link" href="?logout=1" target="_self">🚪 Logout</a>
-</div>
 """, unsafe_allow_html=True)
+
+# Streamlit-native controls preserve the active WebSocket/session, unlike
+# <a href="?page=..."> links which perform a full browser navigation.
+nav_cols = st.columns([1, 1, 1.35, 1, 1, 0.9], gap="small")
+nav_items = [
+    ("🏠 Dashboard", "dashboard"),
+    ("📊 Analytics", "analytics"),
+    ("📅 Monthly Summary", "monthly"),
+    ("📄 Reports", "reports"),
+    ("⚙️ Settings", "settings"),
+]
+
+for col, (label, target) in zip(nav_cols[:5], nav_items):
+    with col:
+        st.button(
+            label,
+            key=f"nav_{target}",
+            type="primary" if page == target else "secondary",
+            use_container_width=True,
+            on_click=navigate_to,
+            args=(target,),
+        )
+
+with nav_cols[5]:
+    st.button(
+        "🚪 Logout",
+        key="nav_logout",
+        use_container_width=True,
+        on_click=logout_current_user,
+    )
+
 # -------------------------
 # CALCULATIONS
 # -------------------------
