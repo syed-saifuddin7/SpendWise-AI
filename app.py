@@ -54,7 +54,7 @@ from ai_actions import (
 
 st.set_page_config(
     page_title="SpendWise AI",
-    page_icon="💰",
+    page_icon="static/icon-192.png",
     layout="wide"
 )
 
@@ -1823,7 +1823,6 @@ if st.session_state.chat_open:
 
                 except Exception as error:
                     error_text = str(error)
-
                     if "429" in error_text or "RESOURCE_EXHAUSTED" in error_text:
                         response = (
                             "⚠️ SpendWiseAI has hit its current request limit. "
