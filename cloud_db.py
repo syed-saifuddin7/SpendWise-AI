@@ -611,7 +611,11 @@ def process_due_recurring_expenses(user_id):
         supabase.table("recurring_expenses").update({
             "last_generated_date": recurring["next_run_date"],
             "next_run_date": next_run.isoformat()
-        }).eq("id", recurring["id"]).execute()
+        }).eq(
+            "id", recurring["id"]
+        ).eq(
+            "user_id", user_id
+        ).execute()
 
     return created_count
 
