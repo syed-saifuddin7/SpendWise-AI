@@ -1,2 +1,34 @@
-import {Shell} from "@/components/spendwise/shell";import {Section} from "@/components/spendwise/ui";import {Plus} from "lucide-react";
-export default function Page(){return <Shell title="Recurring Transactions" subtitle="Automate predictable expenses and income."><Section title="Current Recurring Items" action={<button className="flex items-center gap-1 text-sm sw-brand"><Plus size={15}/> Add recurring</button>}><div className="space-y-2">{[["Rent","Expense","₹8,000","Monthly · 1st"],["Salary","Income","₹35,000","Monthly · 27th"],["Internet","Expense","₹899","Monthly · 8th"]].map(x=><div key={x[0]} className="flex items-center gap-3 rounded-xl border p-4" style={{borderColor:"var(--line)"}}><div className="flex-1"><b>{x[0]}</b><div className="text-xs sw-muted">{x[1]} · {x[3]}</div></div><b>{x[2]}</b></div>)}</div></Section></Shell>}
+import { Shell } from "@/components/spendwise/shell";
+import { getRecurringData } from "@/lib/data/recurring";
+
+import { RecurringDialog } from "./recurring-forms";
+import { RecurringView } from "./recurring-view";
+
+type RecurringPageProps = {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
+
+export default async function Page({ searchParams }: RecurringPageProps) {
+  const params = await searchParams;
+  const data = await getRecurringData(params);
+
+  const dialogOpen = data.addMode || Boolean(data.editingItem);
+
+  return (
+    <Shell
+      title="Recurring"
+      subtitle="Predictable expenses, handled before you have to think about them."
+      user={{ name: data.user.name, email: data.user.email }}
+    >
+      <RecurringView data={data} />
+
+      {dialogOpen && (
+        <RecurringDialog
+          item={data.addMode ? null : data.editingItem}
+          categoryOptions={data.categoryOptions}
+          closeHref="/recurring"
+        />
+      )}
+    </Shell>
+  );
+}
