@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   LayoutDashboard,
   ArrowLeftRight,
@@ -67,6 +67,86 @@ export function Shell({
   const { setTheme, resolvedTheme } = useTheme();
   const [mobile, setMobile] = useState(false);
   const [quick, setQuick] = useState(false);
+  const quickDialogRef = useRef<HTMLDivElement>(null);
+  const quickTriggerRef = useRef<HTMLElement | null>(null);
+
+  function openQuick(trigger: HTMLElement | null) {
+    quickTriggerRef.current = trigger;
+    setQuick(true);
+  }
+
+  // The quick-add panel is a real dialog: Escape closes it, focus moves inside
+  // while it's open, Tab cycles within it, and focus returns to whatever opened
+  // it. Without this it was a div that happened to look like a modal.
+  useEffect(() => {
+    if (!quick) return;
+
+    const dialog = quickDialogRef.current;
+    const focusable = () =>
+      [
+        ...(dialog?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? []),
+      ];
+
+    dialog?.focus();
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setQuick(false);
+        return;
+      }
+
+      if (event.key !== "Tab") return;
+
+      const items = focusable();
+      if (!items.length) return;
+
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+
+      if (!dialog?.contains(active)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+        return;
+      }
+
+      if (event.shiftKey && (active === first || active === dialog)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+
+      if (quickTriggerRef.current?.isConnected) {
+        quickTriggerRef.current.focus();
+      }
+    };
+  }, [quick]);
+
+  useEffect(() => {
+    if (!mobile) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setMobile(false);
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [mobile]);
 
   const displayName = user?.name || "SpendWise User";
   const displayEmail = user?.email || "Personal workspace";
@@ -219,10 +299,12 @@ export function Shell({
       </main>
 
       <button
-        onClick={() => setQuick(true)}
+        onClick={(event) => openQuick(event.currentTarget)}
         className="sw-fab fixed bottom-20 right-5 z-30 grid size-14 place-items-center rounded-full text-white shadow-lg md:bottom-7 md:right-7"
         style={{ background: "var(--brand)" }}
         aria-label="Quick add"
+        aria-haspopup="dialog"
+        aria-expanded={quick}
         title="Quick add"
       >
         <Plus />
@@ -248,7 +330,7 @@ export function Shell({
               index === 2
                 ? (event) => {
                     event.preventDefault();
-                    setQuick(true);
+                    openQuick(event.currentTarget);
                   }
                 : index === 4
                   ? (event) => {
@@ -286,6 +368,9 @@ export function Shell({
         >
           <aside
             onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Navigation"
             className="h-full w-[85%] max-w-xs overflow-y-auto p-3"
             style={{ background: "var(--panel)" }}
           >
@@ -316,8 +401,13 @@ export function Shell({
           onClick={() => setQuick(false)}
         >
           <div
+            ref={quickDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="quick-add-title"
+            tabIndex={-1}
             onClick={(event) => event.stopPropagation()}
-            className="sw-card sw-pop w-full max-w-md overflow-hidden"
+            className="sw-card sw-pop w-full max-w-md overflow-hidden outline-none"
           >
             <div
               className="sw-hero p-5"
@@ -325,12 +415,17 @@ export function Shell({
             >
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-xl font-bold">Quick Add</h2>
+                  <h2 id="quick-add-title" className="text-xl font-bold">
+                    Quick Add
+                  </h2>
                   <p className="text-sm sw-muted">
                     What would you like to add?
                   </p>
                 </div>
-                <button onClick={() => setQuick(false)} aria-label="Close">
+                <button
+                  onClick={() => setQuick(false)}
+                  aria-label="Close quick add"
+                >
                   <X />
                 </button>
               </div>
@@ -356,6 +451,37 @@ export function Shell({
                   <div className="mt-2 font-semibold">{label}</div>
                 </Link>
               ))}
+
+              <button
+                type="button"
+                disabled
+                aria-describedby="quick-voice-note"
+                title="Voice logging arrives in Phase 27"
+                className="col-span-2 flex cursor-not-allowed items-center gap-3 rounded-2xl border border-dashed p-4 text-left opacity-70"
+                style={{ borderColor: "var(--line)" }}
+              >
+                <span className="text-2xl">🎙️</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-semibold">Voice</span>
+                  <span className="block text-xs sw-muted">
+                    Say it instead of typing it
+                  </span>
+                </span>
+                <span
+                  className="shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide sw-muted"
+                  style={{ borderColor: "var(--line)" }}
+                >
+                  Phase 27
+                </span>
+              </button>
+
+              <p
+                id="quick-voice-note"
+                className="col-span-2 text-xs leading-5 sw-muted"
+              >
+                Expense, income, transfers and receipts work today. Voice
+                logging lands in Phase 27 with the speech pipeline.
+              </p>
             </div>
           </div>
         </div>

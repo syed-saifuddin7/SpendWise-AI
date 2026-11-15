@@ -1,6 +1,7 @@
 import {
   ArrowDownRight,
   ArrowLeftRight,
+  CalendarClock,
   Landmark,
   Sparkles,
   Target,
@@ -21,6 +22,7 @@ import { Shell } from "@/components/spendwise/shell";
 import { categoryEmoji } from "@/lib/categories";
 import { getDashboardData } from "@/lib/data/dashboard";
 import { formatMoney } from "@/lib/finance";
+import { dueLabel } from "@/lib/recurring";
 
 export default async function Page() {
   const data = await getDashboardData();
@@ -295,7 +297,7 @@ export default async function Page() {
         </Section>
       </div>
 
-      <div className="sw-stagger mt-4 grid gap-4 xl:grid-cols-2">
+      <div className="sw-stagger mt-4 grid gap-4 xl:grid-cols-3">
         <Section
           title="Recent Transactions"
           action={
@@ -306,6 +308,110 @@ export default async function Page() {
             transactions={data.recent}
             currency={data.currency}
           />
+        </Section>
+
+        <Section
+          title="Upcoming Bills"
+          action={
+            <Link
+              href="/recurring"
+              scroll={false}
+              className="text-xs font-semibold"
+              style={{ color: "var(--brand)" }}
+            >
+              Manage plans
+            </Link>
+          }
+        >
+          {data.upcomingBills.length ? (
+            <>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm">
+                <span className="flex items-center gap-2 sw-muted">
+                  <CalendarClock size={16} />
+                  {data.upcomingBillCount} bill
+                  {data.upcomingBillCount === 1 ? "" : "s"} due in the next 7
+                  days
+                </span>
+                <b>
+                  {formatMoney(data.upcomingBillsTotal, data.currency)}
+                </b>
+              </div>
+
+              <div className="space-y-2">
+                {data.upcomingBills.map((bill) => {
+                  const urgent = bill.days <= 2;
+
+                  return (
+                    <div
+                      key={bill.id}
+                      data-bill={bill.name}
+                      data-days={bill.days}
+                      className="flex items-center gap-3 rounded-xl border px-3 py-2"
+                      style={{
+                        borderColor: urgent ? "var(--warn)" : "var(--line)",
+                        background: urgent
+                          ? "color-mix(in srgb, var(--warn) 8%, transparent)"
+                          : "transparent",
+                      }}
+                    >
+                      <span
+                        className="grid size-9 shrink-0 place-items-center rounded-lg text-lg"
+                        style={{ background: "var(--panel)" }}
+                      >
+                        {bill.emoji}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-semibold">
+                          {bill.name}
+                        </div>
+                        <div className="text-xs sw-muted">
+                          {bill.category} · {bill.frequency}
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className="text-sm font-bold">
+                          {formatMoney(bill.amount, data.currency)}
+                        </div>
+                        <div
+                          className="text-[11px] font-semibold"
+                          style={{
+                            color:
+                              bill.days < 0
+                                ? "var(--danger)"
+                                : urgent
+                                  ? "var(--warn)"
+                                  : "var(--muted)",
+                          }}
+                        >
+                          {dueLabel(bill.days)}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {data.upcomingBillCount > data.upcomingBills.length && (
+                <p className="mt-3 text-xs sw-muted">
+                  +{data.upcomingBillCount - data.upcomingBills.length} more due
+                  this week
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="py-8 text-center text-sm sw-muted">
+              Nothing due in the next 7 days.{" "}
+              <Link
+                href="/recurring"
+                scroll={false}
+                className="font-semibold"
+                style={{ color: "var(--brand)" }}
+              >
+                Add a recurring plan
+              </Link>{" "}
+              and it will show up here before it lands.
+            </p>
+          )}
         </Section>
 
         <Section

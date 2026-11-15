@@ -7,6 +7,9 @@ import {
   type CategoryBudgetProgress,
   type FinancialHealth,
 } from "@/lib/finance";
+import { categoryEmoji } from "@/lib/categories";
+import { todayKey } from "@/lib/dates";
+import { daysUntil, frequencyLabel } from "@/lib/recurring";
 import { createClient } from "@/lib/supabase/server";
 import type {
   GoalContributionRecord,
@@ -32,6 +35,17 @@ export type DashboardGoal = {
   percentage: number;
   progress: number;
   status: GoalStatus;
+};
+
+export type DashboardBill = {
+  id: number;
+  name: string;
+  category: string;
+  emoji: string;
+  amount: number;
+  frequency: string;
+  dueDate: string;
+  days: number;
 };
 
 export type DashboardData = {
@@ -66,6 +80,9 @@ export type DashboardData = {
   goals: DashboardGoal[];
   goalsSaved: number;
   goalsTarget: number;
+  upcomingBills: DashboardBill[];
+  upcomingBillCount: number;
+  upcomingBillsTotal: number;
   totalBalance: number;
   walletCount: number;
 };
@@ -111,6 +128,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     goalContributionsResult,
     walletsResult,
     ledgerResult,
+    recurringResult,
   ] = await Promise.all([
     supabase
       .from("transactions")
@@ -158,6 +176,14 @@ export async function getDashboardData(): Promise<DashboardData> {
       .from("transactions")
       .select("type, amount, date, wallet_id, transfer_wallet_id")
       .eq("user_id", user.id),
+    // Only money going out counts as a bill; income plans are listed on
+    // /recurring instead of being dressed up as something you owe.
+    supabase
+      .from("recurring_expenses")
+      .select("id, name, type, amount, category, frequency, next_run_date")
+      .eq("user_id", user.id)
+      .eq("is_active", true)
+      .order("next_run_date"),
   ]);
 
   if (transactionsResult.error) {
@@ -196,6 +222,12 @@ export async function getDashboardData(): Promise<DashboardData> {
 
   if (ledgerResult.error) {
     throw new Error(`Could not load balances: ${ledgerResult.error.message}`);
+  }
+
+  if (recurringResult.error) {
+    throw new Error(
+      `Could not load upcoming bills: ${recurringResult.error.message}`,
+    );
   }
 
   const today = `${monthKey}-${pad(now.getDate())}`;
@@ -239,6 +271,43 @@ export async function getDashboardData(): Promise<DashboardData> {
 
   const goalsSaved = goals.reduce((total, goal) => total + goal.saved, 0);
   const goalsTarget = goals.reduce((total, goal) => total + goal.target, 0);
+
+  // Bills due in the next week, plus anything already past its date — an
+  // overdue rent payment matters more than one that's merely soon.
+  const todayValue = todayKey();
+  const dueBills: DashboardBill[] = ((recurringResult.data ?? []) as {
+    id: number;
+    name: string;
+    type: string | null;
+    amount: number | string | null;
+    category: string | null;
+    frequency: string | null;
+    next_run_date: string | null;
+  }[])
+    .filter((plan) => plan.type !== "income" && plan.next_run_date)
+    .map((plan) => {
+      const dueDate = String(plan.next_run_date);
+      const category = String(plan.category || "Other");
+
+      return {
+        id: Number(plan.id),
+        name: String(plan.name),
+        category,
+        emoji: categoryEmoji(category),
+        amount: Number(plan.amount) || 0,
+        frequency: frequencyLabel(plan.frequency),
+        dueDate,
+        days: daysUntil(dueDate, todayValue),
+      };
+    })
+    .filter((bill) => bill.days <= 7)
+    .sort((a, b) => a.days - b.days);
+
+  const upcomingBills = dueBills.slice(0, 4);
+  const upcomingBillCount = dueBills.filter((bill) => bill.days >= 0).length;
+  const upcomingBillsTotal = dueBills
+    .filter((bill) => bill.days >= 0)
+    .reduce((total, bill) => total + bill.amount, 0);
 
   const transactions = (transactionsResult.data ?? []) as TransactionRecord[];
   const expenses = transactions.filter(
@@ -371,6 +440,9 @@ export async function getDashboardData(): Promise<DashboardData> {
     goals,
     goalsSaved,
     goalsTarget,
+    upcomingBills,
+    upcomingBillCount,
+    upcomingBillsTotal,
     totalBalance,
     walletCount: wallets.length,
   };
