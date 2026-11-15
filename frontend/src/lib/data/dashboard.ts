@@ -8,12 +8,28 @@ import {
   type FinancialHealth,
 } from "@/lib/finance";
 import { createClient } from "@/lib/supabase/server";
-import type { TransactionRecord } from "@/lib/types";
+import type {
+  GoalContributionRecord,
+  GoalRecord,
+  TransactionRecord,
+} from "@/lib/types";
+import { summarizeGoal, type GoalStatus } from "@/lib/goals";
 
 export type CategoryTotal = {
   name: string;
   amount: number;
   percentage: number;
+};
+
+export type DashboardGoal = {
+  id: number;
+  name: string;
+  emoji: string;
+  saved: number;
+  target: number;
+  percentage: number;
+  progress: number;
+  status: GoalStatus;
 };
 
 export type DashboardData = {
@@ -45,6 +61,9 @@ export type DashboardData = {
   categories: CategoryTotal[];
   categoryBudgets: CategoryBudgetProgress[];
   health: FinancialHealth;
+  goals: DashboardGoal[];
+  goalsSaved: number;
+  goalsTarget: number;
 };
 
 function pad(value: number) {
@@ -84,6 +103,8 @@ export async function getDashboardData(): Promise<DashboardData> {
     budgetResult,
     settingsResult,
     categoryBudgetsResult,
+    goalsResult,
+    goalContributionsResult,
   ] = await Promise.all([
     supabase
       .from("transactions")
@@ -110,6 +131,16 @@ export async function getDashboardData(): Promise<DashboardData> {
       .eq("user_id", user.id)
       .eq("month", monthKey)
       .order("category_name"),
+    supabase
+      .from("goals")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("is_active", true)
+      .order("id"),
+    supabase
+      .from("goal_contributions")
+      .select("goal_id, amount, date")
+      .eq("user_id", user.id),
   ]);
 
   if (transactionsResult.error) {
@@ -131,6 +162,58 @@ export async function getDashboardData(): Promise<DashboardData> {
       `Could not load category budgets: ${categoryBudgetsResult.error.message}`,
     );
   }
+
+  if (goalsResult.error) {
+    throw new Error(`Could not load goals: ${goalsResult.error.message}`);
+  }
+
+  if (goalContributionsResult.error) {
+    throw new Error(
+      `Could not load goal contributions: ${goalContributionsResult.error.message}`,
+    );
+  }
+
+  const today = `${monthKey}-${pad(now.getDate())}`;
+  const goalContributionsByGoal = new Map<
+    number,
+    Pick<GoalContributionRecord, "amount" | "date">[]
+  >();
+
+  for (const contribution of (goalContributionsResult.data ??
+    []) as Pick<GoalContributionRecord, "goal_id" | "amount" | "date">[]) {
+    const goalId = Number(contribution.goal_id);
+    const bucket = goalContributionsByGoal.get(goalId);
+
+    if (bucket) {
+      bucket.push(contribution);
+    } else {
+      goalContributionsByGoal.set(goalId, [contribution]);
+    }
+  }
+
+  const goals: DashboardGoal[] = ((goalsResult.data ?? []) as GoalRecord[])
+    .map((goal) => {
+      const progress = summarizeGoal(
+        goal,
+        goalContributionsByGoal.get(Number(goal.id)) ?? [],
+        today,
+      );
+
+      return {
+        id: Number(goal.id),
+        name: String(goal.name),
+        emoji: String(goal.emoji ?? "🎯"),
+        saved: progress.saved,
+        target: progress.target,
+        percentage: progress.percentage,
+        progress: progress.progress,
+        status: progress.status,
+      };
+    })
+    .sort((a, b) => b.progress - a.progress);
+
+  const goalsSaved = goals.reduce((total, goal) => total + goal.saved, 0);
+  const goalsTarget = goals.reduce((total, goal) => total + goal.target, 0);
 
   const transactions = (transactionsResult.data ?? []) as TransactionRecord[];
   const expenses = transactions.filter(
@@ -246,5 +329,8 @@ export async function getDashboardData(): Promise<DashboardData> {
       monthlyBudget,
       categoryBudgets,
     ),
+    goals,
+    goalsSaved,
+    goalsTarget,
   };
 }

@@ -1,2 +1,51 @@
-import {Shell} from "@/components/spendwise/shell";import {Progress} from "@/components/spendwise/ui";import {Plus,Target} from "lucide-react";
-export default function Page(){return <Shell title="Savings Goals" subtitle="Turn big purchases into achievable milestones."><div className="mb-4 flex justify-end"><button className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-white" style={{background:"var(--brand)"}}><Plus size={17}/> New Goal</button></div><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{[["Laptop","₹42,000","₹80,000",53,"Mar 2027"],["Emergency Fund","₹18,500","₹50,000",37,"Jun 2027"],["Trip","₹9,200","₹25,000",37,"Dec 2026"]].map(g=><div className="sw-card p-5" key={g[0]}><div className="flex items-center gap-3"><div className="grid size-11 place-items-center rounded-xl" style={{background:"var(--brand-soft)",color:"var(--brand)"}}><Target/></div><div><b>{g[0]}</b><div className="text-xs sw-muted">Target {g[4]}</div></div></div><div className="mt-6 text-2xl font-bold">{g[1]} <span className="text-sm font-normal sw-muted">of {g[2]}</span></div><div className="mt-3"><Progress value={g[3] as number}/></div><button className="mt-5 w-full rounded-xl border py-2 text-sm font-semibold" style={{borderColor:"var(--line)"}}>Add Contribution</button></div>)}</div></Shell>}
+import { Shell } from "@/components/spendwise/shell";
+import { getGoalsData } from "@/lib/data/goals";
+
+import { ContributionDialog } from "./contribution-dialog";
+import { GoalDialog } from "./goal-dialog";
+import { GoalsView } from "./goals-view";
+
+type GoalsPageProps = {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
+
+export default async function Page({ searchParams }: GoalsPageProps) {
+  const params = await searchParams;
+  const data = await getGoalsData(params);
+
+  const goalDialogOpen = data.addMode || Boolean(data.editingGoal);
+
+  const contributionGoal = data.editingContribution
+    ? (data.goals.find(
+        (goal) => goal.id === data.editingContribution?.goalId,
+      ) ?? null)
+    : data.contributingGoal;
+
+  return (
+    <Shell
+      title="Goals"
+      subtitle="Turn someday into a date, an amount, and a bar that fills up."
+      user={{ name: data.user.name, email: data.user.email }}
+    >
+      <GoalsView data={data} />
+
+      {goalDialogOpen && (
+        <GoalDialog
+          goal={data.addMode ? null : data.editingGoal}
+          currency={data.currency}
+          today={data.today}
+          closeHref="/goals"
+        />
+      )}
+
+      {contributionGoal && (
+        <ContributionDialog
+          goal={contributionGoal}
+          contribution={data.editingContribution}
+          today={data.today}
+          closeHref="/goals"
+        />
+      )}
+    </Shell>
+  );
+}

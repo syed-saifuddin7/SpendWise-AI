@@ -32,6 +32,32 @@ export type WalletRecord = {
   updated_at?: string;
 };
 
+export type GoalRecord = {
+  id: number;
+  user_id: string;
+  name: string;
+  emoji: string;
+  target_amount: number | string;
+  starting_amount: number | string;
+  currency: string;
+  target_date: string | null;
+  note: string;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type GoalContributionRecord = {
+  id: number;
+  user_id: string;
+  goal_id: number;
+  amount: number | string;
+  date: string;
+  note: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export const TRANSACTION_TYPES: TransactionType[] = [
   "expense",
   "income",

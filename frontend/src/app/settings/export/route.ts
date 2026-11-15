@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 const EXPORT_TABLES = [
   "transactions",
   "wallets",
+  "goals",
+  "goal_contributions",
   "expenses",
   "budgets",
   "category_budgets",

@@ -2,9 +2,11 @@ import {
   ArrowDownRight,
   ArrowLeftRight,
   Sparkles,
+  Target,
   TrendingDown,
   Wallet,
 } from "lucide-react";
+import Link from "next/link";
 
 import {
   Bars,
@@ -328,6 +330,80 @@ export default async function Page() {
           ) : (
             <p className="py-8 text-center text-sm sw-muted">
               Category breakdown will appear once you add expenses.
+            </p>
+          )}
+        </Section>
+      </div>
+
+      <div className="sw-stagger mt-4">
+        <Section
+          title="Savings Goals"
+          action={
+            <Link
+              href="/goals"
+              scroll={false}
+              className="text-xs font-semibold"
+              style={{ color: "var(--brand)" }}
+            >
+              Manage goals
+            </Link>
+          }
+        >
+          {data.goals.length ? (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                <span className="flex items-center gap-2 sw-muted">
+                  <Target size={16} />
+                  {data.goals.length} active goal
+                  {data.goals.length === 1 ? "" : "s"} ·{" "}
+                  {Math.round(
+                    data.goalsTarget > 0
+                      ? (data.goalsSaved / data.goalsTarget) * 100
+                      : 0,
+                  )}
+                  % funded
+                </span>
+                <b>
+                  {formatMoney(data.goalsSaved, data.currency)} /{" "}
+                  {formatMoney(data.goalsTarget, data.currency)}
+                </b>
+              </div>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                {data.goals.slice(0, 3).map((goal) => (
+                  <div key={goal.id}>
+                    <div className="flex items-center justify-between gap-2 text-sm">
+                      <span className="flex min-w-0 items-center gap-2 font-medium">
+                        <span className="text-base">{goal.emoji}</span>
+                        <span className="truncate">{goal.name}</span>
+                      </span>
+                      <span className="shrink-0 text-xs sw-muted">
+                        {Math.round(goal.percentage)}%
+                      </span>
+                    </div>
+                    <div className="mt-2">
+                      <Progress value={goal.progress} />
+                    </div>
+                    <div className="mt-2 text-xs sw-muted">
+                      {formatMoney(goal.saved, data.currency)} of{" "}
+                      {formatMoney(goal.target, data.currency)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="py-6 text-center text-sm sw-muted">
+              No savings goals yet.{" "}
+              <Link
+                href="/goals"
+                scroll={false}
+                className="font-semibold"
+                style={{ color: "var(--brand)" }}
+              >
+                Create one
+              </Link>{" "}
+              and it will show up here with its progress.
             </p>
           )}
         </Section>
