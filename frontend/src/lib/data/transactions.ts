@@ -6,6 +6,9 @@ import {
   DEFAULT_CATEGORY_NAMES,
   INCOME_CATEGORY_NAMES,
   TRANSFER_CATEGORY_NAME,
+  defaultCategoryKind,
+  isCategoryKind,
+  type CategoryKind,
 } from "@/lib/categories";
 import {
   currentMonthKey,
@@ -27,6 +30,7 @@ export type TransactionCategory = {
   id: number | null;
   name: string;
   emoji: string | null;
+  kind: CategoryKind;
 };
 
 export type TransactionWallet = {
@@ -151,7 +155,7 @@ export async function getTransactionsData(
         .limit(1),
       supabase
         .from("categories")
-        .select("id, name, emoji")
+        .select("id, name, emoji, kind")
         .eq("user_id", user.id)
         .order("name"),
       supabase
@@ -197,6 +201,9 @@ export async function getTransactionsData(
     id: Number(category.id),
     name: String(category.name),
     emoji: (category.emoji as string | null) ?? null,
+    kind: isCategoryKind(String(category.kind))
+      ? (String(category.kind) as CategoryKind)
+      : defaultCategoryKind(String(category.name)),
   }));
 
   const wallets: TransactionWallet[] = ((walletsResult.data ?? []) as WalletRecord[]).map(
@@ -304,7 +311,12 @@ export async function getTransactionsData(
     const options = new Map<string, TransactionCategory>();
 
     for (const name of [...DEFAULT_CATEGORY_NAMES, ...INCOME_CATEGORY_NAMES]) {
-      options.set(name, { id: null, name, emoji: null });
+      options.set(name, {
+        id: null,
+        name,
+        emoji: null,
+        kind: defaultCategoryKind(name),
+      });
     }
 
     for (const category of userCategories) {
@@ -321,6 +333,7 @@ export async function getTransactionsData(
           id: null,
           name: transaction.category,
           emoji: null,
+          kind: "both",
         });
       }
     }

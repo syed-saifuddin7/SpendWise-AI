@@ -9,10 +9,57 @@ import {
 import Link from "next/link";
 
 import { Metric, Progress, Section } from "@/components/spendwise/ui";
-import type { CategoriesData } from "@/lib/data/categories";
+import { categoryKindMeta } from "@/lib/categories";
+import type { CategoriesData, CategoryItem } from "@/lib/data/categories";
 import { formatMoney } from "@/lib/finance";
 
 import { CategoryDeleteForm } from "./category-forms";
+
+function CategoryUsage({
+  category,
+  currency,
+}: {
+  category: CategoryItem;
+  currency: string;
+}) {
+  if (category.monthIncomeCount > 0 && category.monthCount === 0) {
+    return (
+      <>
+        {category.monthIncomeCount} income this month ·{" "}
+        {formatMoney(category.monthIncome, currency)} received
+      </>
+    );
+  }
+
+  if (category.monthCount > 0) {
+    return (
+      <>
+        {category.monthCount} this month ·{" "}
+        {formatMoney(category.monthSpent, currency)}
+      </>
+    );
+  }
+
+  if (category.incomeCount > 0 && category.expenseCount === 0) {
+    return (
+      <>
+        {category.incomeCount} income entr
+        {category.incomeCount === 1 ? "y" : "ies"} all time
+      </>
+    );
+  }
+
+  if (category.expenseCount > 0) {
+    return (
+      <>
+        {category.expenseCount} expense
+        {category.expenseCount === 1 ? "" : "s"} all time
+      </>
+    );
+  }
+
+  return <>Not used yet</>;
+}
 
 export function CategoriesView({ data }: { data: CategoriesData }) {
   return (
@@ -37,8 +84,8 @@ export function CategoriesView({ data }: { data: CategoriesData }) {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm sw-muted">
           <span className="sw-dot mr-2 align-middle" />
-          Built-in categories are always ready. Custom categories are yours to
-          shape.
+          Built-in categories are always ready. Custom ones are yours to shape —
+          icon, colour, and whether they belong to money in or money out.
         </p>
         <Link
           href="/categories?add=1"
@@ -51,7 +98,7 @@ export function CategoriesView({ data }: { data: CategoriesData }) {
         </Link>
       </div>
 
-      <div className="sw-stagger grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="sw-stagger grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <Metric
           label="Total categories"
           value={String(data.totalCount)}
@@ -59,20 +106,28 @@ export function CategoriesView({ data }: { data: CategoriesData }) {
           icon={<Tags size={17} />}
         />
         <Metric
+          label="Income categories"
+          value={String(data.incomeKindCount)}
+          note={`${data.expenseKindCount} expense · ${data.bothKindCount} both`}
+          icon={<TrendingUp size={17} />}
+        />
+        <Metric
           label="Used this month"
           value={`${data.usedCount} / ${data.totalCount}`}
           note={data.monthLabel}
-          icon={<TrendingUp size={17} />}
+          icon={<Tags size={17} />}
         />
         <Metric
           label="Spent this month"
           value={formatMoney(data.monthTotal, data.currency)}
           note={
-            data.monthTotal > 0
-              ? "across all categories"
-              : "No spending recorded yet"
+            data.monthIncomeTotal > 0
+              ? `${formatMoney(data.monthIncomeTotal, data.currency)} received`
+              : data.monthTotal > 0
+                ? "across all categories"
+                : "No spending recorded yet"
           }
-          good={data.monthTotal > 0}
+          good={data.monthTotal > 0 || data.monthIncomeTotal > 0}
           icon={<Sparkles size={17} />}
         />
         <Metric
@@ -106,24 +161,40 @@ export function CategoriesView({ data }: { data: CategoriesData }) {
                 <div
                   key={`${category.custom ? "custom" : "builtin"}-${category.name}`}
                   className="sw-card sw-card-lift group p-4"
+                  data-category={category.name}
+                  data-kind={category.kind}
+                  data-color={category.color}
                   style={{ background: active ? "var(--panel)" : "var(--bg)" }}
                 >
                   <div className="flex items-start gap-3">
                     <div
                       className="grid size-11 shrink-0 place-items-center rounded-xl text-xl transition group-hover:scale-110"
                       style={{
-                        background: active
-                          ? "var(--brand-soft)"
-                          : "var(--panel)",
+                        background: `color-mix(in srgb, ${category.color} ${
+                          active ? "20%" : "12%"
+                        }, transparent)`,
+                        boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${
+                          category.color
+                        } 35%, transparent)`,
                       }}
                     >
                       {category.emoji}
                     </div>
 
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="truncate font-semibold">
                           {category.name}
+                        </span>
+                        <span
+                          className="inline-flex shrink-0 items-center gap-1 text-[10px] font-bold uppercase tracking-wide sw-muted"
+                          title={`${categoryKindMeta(category.kind).label} category`}
+                        >
+                          <span
+                            className="size-2 rounded-full"
+                            style={{ background: category.color }}
+                          />
+                          {categoryKindMeta(category.kind).label}
                         </span>
                         <span
                           className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
@@ -155,16 +226,10 @@ export function CategoriesView({ data }: { data: CategoriesData }) {
                       </div>
 
                       <div className="mt-1 text-xs sw-muted">
-                        {category.monthCount > 0
-                          ? `${category.monthCount} this month · ${formatMoney(
-                              category.monthSpent,
-                              data.currency,
-                            )}`
-                          : category.expenseCount > 0
-                            ? `${category.expenseCount} expense${
-                                category.expenseCount === 1 ? "" : "s"
-                              } all time`
-                            : "Not used yet"}
+                        <CategoryUsage
+                          category={category}
+                          currency={data.currency}
+                        />
                       </div>
                     </div>
 
@@ -185,19 +250,29 @@ export function CategoriesView({ data }: { data: CategoriesData }) {
                   </div>
 
                   <div className="mt-3">
-                    <Progress value={category.share} />
+                    <Progress value={category.share} color={category.color} />
                     <div className="mt-2 flex items-center justify-between text-[11px] sw-muted">
                       <span>
-                        {category.share > 0
+                        {category.monthCount > 0 && category.share > 0
                           ? `${Math.round(category.share)}% of this month`
-                          : "No spending this month"}
+                          : category.monthIncomeCount > 0
+                            ? `${formatMoney(
+                                category.monthIncome,
+                                data.currency,
+                              )} received`
+                            : "No activity this month"}
                       </span>
-                      {category.totalSpent > 0 && (
+                      {category.totalSpent > 0 ? (
                         <span>
                           {formatMoney(category.totalSpent, data.currency)} all
                           time
                         </span>
-                      )}
+                      ) : category.totalIncome > 0 ? (
+                        <span>
+                          {formatMoney(category.totalIncome, data.currency)}{" "}
+                          received
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                 </div>

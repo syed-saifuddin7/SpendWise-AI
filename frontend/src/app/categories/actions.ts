@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { DEFAULT_CATEGORY_NAMES } from "@/lib/categories";
+import { DEFAULT_CATEGORY_NAMES, isCategoryColor, isCategoryKind } from "@/lib/categories";
 import { createClient } from "@/lib/supabase/server";
 
 export type CategoryFormState = { error: string } | undefined;
@@ -49,6 +49,8 @@ export async function saveCategory(
   const id = readText(formData, "id");
   const name = readText(formData, "name").replace(/\s+/g, " ");
   const emoji = readText(formData, "emoji");
+  const color = readText(formData, "color");
+  const kindValue = readText(formData, "kind") || "expense";
 
   if (!name) {
     return { error: "Enter a category name." };
@@ -60,6 +62,14 @@ export async function saveCategory(
 
   if (emoji.length > 16) {
     return { error: "Use a single emoji (or leave it empty)." };
+  }
+
+  if (color && !isCategoryColor(color)) {
+    return { error: "Pick a colour from the palette." };
+  }
+
+  if (!isCategoryKind(kindValue)) {
+    return { error: "Choose whether this category is income, an expense, or both." };
   }
 
   const supabase = await createClient();
@@ -111,6 +121,8 @@ export async function saveCategory(
   const record = {
     name,
     emoji: emoji || null,
+    color: color || null,
+    kind: kindValue,
   };
 
   if (id) {

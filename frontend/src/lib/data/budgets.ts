@@ -2,7 +2,13 @@ import "server-only";
 
 import { redirect } from "next/navigation";
 
-import { DEFAULT_CATEGORY_NAMES, categoryEmoji } from "@/lib/categories";
+import {
+  DEFAULT_CATEGORY_NAMES,
+  categoryColor,
+  categoryEmoji,
+  defaultCategoryKind,
+  isCategoryKind,
+} from "@/lib/categories";
 import {
   currentMonthKey,
   monthLabel,
@@ -21,11 +27,14 @@ export type BudgetCategoryOption = {
   id: number | null;
   name: string;
   emoji: string;
+  color: string;
+  kind: "expense" | "income" | "both";
 };
 
 export type BudgetCategoryRow = CategoryBudgetProgress & {
   categoryId: number | null;
   emoji: string;
+  color: string;
 };
 
 export type BudgetNotice = {
@@ -116,7 +125,7 @@ export async function getBudgetsData(
       .limit(1),
     supabase
       .from("categories")
-      .select("id, name, emoji")
+      .select("id, name, emoji, color, kind")
       .eq("user_id", user.id)
       .order("name"),
     supabase
@@ -186,6 +195,13 @@ export async function getBudgetsData(
       String(category.name),
       (category.emoji as string | null) ?? null,
     ),
+    color: categoryColor(
+      String(category.name),
+      (category.color as string | null) ?? null,
+    ),
+    kind: isCategoryKind(String(category.kind))
+      ? (String(category.kind) as "expense" | "income" | "both")
+      : defaultCategoryKind(String(category.name)),
   }));
 
   const categorizedBudgetRows = (categoryBudgetsResult.data ?? []).map(
@@ -210,6 +226,7 @@ export async function getBudgetsData(
       return {
         name: row.name,
         emoji: userCategory?.emoji ?? categoryEmoji(row.name),
+        color: userCategory?.color ?? categoryColor(row.name),
         categoryId: row.categoryId,
         spent,
         budget,
@@ -220,11 +237,22 @@ export async function getBudgetsData(
 
   const optionMap = new Map<string, BudgetCategoryOption>();
 
+  // Budgets track spending, so income-only categories have no place here.
   for (const name of DEFAULT_CATEGORY_NAMES) {
-    optionMap.set(name, { id: null, name, emoji: categoryEmoji(name) });
+    if (defaultCategoryKind(name) === "income") continue;
+
+    optionMap.set(name, {
+      id: null,
+      name,
+      emoji: categoryEmoji(name),
+      color: categoryColor(name),
+      kind: defaultCategoryKind(name),
+    });
   }
 
   for (const category of userCategories) {
+    if (category.kind === "income") continue;
+
     optionMap.set(category.name, category);
   }
 
@@ -234,6 +262,8 @@ export async function getBudgetsData(
         id: row.categoryId,
         name: row.name,
         emoji: row.emoji,
+        color: row.color,
+        kind: "both",
       });
     }
   }

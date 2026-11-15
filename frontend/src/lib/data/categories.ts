@@ -2,7 +2,14 @@ import "server-only";
 
 import { redirect } from "next/navigation";
 
-import { DEFAULT_CATEGORY_NAMES, categoryEmoji } from "@/lib/categories";
+import {
+  DEFAULT_CATEGORY_NAMES,
+  categoryColor,
+  categoryEmoji,
+  defaultCategoryKind,
+  isCategoryKind,
+  type CategoryKind,
+} from "@/lib/categories";
 import { currentMonthKey, monthLabel, monthRange } from "@/lib/dates";
 import { createClient } from "@/lib/supabase/server";
 
@@ -10,12 +17,18 @@ export type CategoryItem = {
   id: number | null;
   name: string;
   emoji: string;
+  color: string;
+  kind: CategoryKind;
   custom: boolean;
   builtIn: boolean;
   expenseCount: number;
   totalSpent: number;
   monthCount: number;
   monthSpent: number;
+  incomeCount: number;
+  totalIncome: number;
+  monthIncomeCount: number;
+  monthIncome: number;
   share: number;
 };
 
@@ -29,10 +42,14 @@ export type CategoriesData = {
   monthKey: string;
   monthLabel: string;
   monthTotal: number;
+  monthIncomeTotal: number;
   items: CategoryItem[];
   totalCount: number;
   customCount: number;
   usedCount: number;
+  expenseKindCount: number;
+  incomeKindCount: number;
+  bothKindCount: number;
   addMode: boolean;
   editingCategory: CategoryItem | null;
   notice: { type: "success" | "error"; message: string } | null;
@@ -40,8 +57,32 @@ export type CategoriesData = {
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
+type Usage = {
+  expenseCount: number;
+  totalSpent: number;
+  monthCount: number;
+  monthSpent: number;
+  incomeCount: number;
+  totalIncome: number;
+  monthIncomeCount: number;
+  monthIncome: number;
+};
+
 function first(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function emptyUsage(): Usage {
+  return {
+    expenseCount: 0,
+    totalSpent: 0,
+    monthCount: 0,
+    monthSpent: 0,
+    incomeCount: 0,
+    totalIncome: 0,
+    monthIncomeCount: 0,
+    monthIncome: 0,
+  };
 }
 
 export async function getCategoriesData(
@@ -61,23 +102,26 @@ export async function getCategoriesData(
   const monthKey = currentMonthKey();
   const { start, nextStart } = monthRange(monthKey);
 
-  const [settingsResult, categoriesResult, expensesResult] = await Promise.all([
-    supabase
-      .from("user_settings")
-      .select("display_name, currency")
-      .eq("user_id", user.id)
-      .limit(1),
-    supabase
-      .from("categories")
-      .select("id, name, emoji")
-      .eq("user_id", user.id)
-      .order("name"),
-    supabase
-      .from("transactions")
-      .select("category, amount, date")
-      .eq("user_id", user.id)
-      .eq("type", "expense"),
-  ]);
+  const [settingsResult, categoriesResult, transactionsResult] =
+    await Promise.all([
+      supabase
+        .from("user_settings")
+        .select("display_name, currency")
+        .eq("user_id", user.id)
+        .limit(1),
+      supabase
+        .from("categories")
+        .select("id, name, emoji, color, kind")
+        .eq("user_id", user.id)
+        .order("name"),
+      // Both directions matter now: an income category's job is to show what
+      // came in, not what went out.
+      supabase
+        .from("transactions")
+        .select("type, category, amount, date")
+        .eq("user_id", user.id)
+        .in("type", ["expense", "income"]),
+    ]);
 
   if (settingsResult.error) {
     throw new Error(`Could not load settings: ${settingsResult.error.message}`);
@@ -89,45 +133,45 @@ export async function getCategoriesData(
     );
   }
 
-  if (expensesResult.error) {
+  if (transactionsResult.error) {
     throw new Error(
-      `Could not load transactions: ${expensesResult.error.message}`,
+      `Could not load transactions: ${transactionsResult.error.message}`,
     );
   }
 
   const settings = settingsResult.data?.[0];
   const currency = (settings?.currency as string | null) ?? "INR";
 
-  type Usage = {
-    expenseCount: number;
-    totalSpent: number;
-    monthCount: number;
-    monthSpent: number;
-  };
-
   const usageMap = new Map<string, Usage>();
   let monthTotal = 0;
+  let monthIncomeTotal = 0;
 
-  for (const expense of expensesResult.data ?? []) {
-    const name = String(expense.category || "Other");
-    const amount = Number(expense.amount) || 0;
-    const date = String(expense.date ?? "");
+  for (const transaction of transactionsResult.data ?? []) {
+    const name = String(transaction.category || "Other");
+    const amount = Number(transaction.amount) || 0;
+    const date = String(transaction.date ?? "");
     const inMonth = date >= start && date < nextStart;
 
-    const usage = usageMap.get(name) ?? {
-      expenseCount: 0,
-      totalSpent: 0,
-      monthCount: 0,
-      monthSpent: 0,
-    };
+    const usage = usageMap.get(name) ?? emptyUsage();
 
-    usage.expenseCount += 1;
-    usage.totalSpent += amount;
+    if (transaction.type === "income") {
+      usage.incomeCount += 1;
+      usage.totalIncome += amount;
 
-    if (inMonth) {
-      usage.monthCount += 1;
-      usage.monthSpent += amount;
-      monthTotal += amount;
+      if (inMonth) {
+        usage.monthIncomeCount += 1;
+        usage.monthIncome += amount;
+        monthIncomeTotal += amount;
+      }
+    } else {
+      usage.expenseCount += 1;
+      usage.totalSpent += amount;
+
+      if (inMonth) {
+        usage.monthCount += 1;
+        usage.monthSpent += amount;
+        monthTotal += amount;
+      }
     }
 
     usageMap.set(name, usage);
@@ -137,24 +181,36 @@ export async function getCategoriesData(
     id: Number(category.id),
     name: String(category.name),
     emoji: (category.emoji as string | null) ?? null,
+    color: (category.color as string | null) ?? null,
+    kind: isCategoryKind(String(category.kind))
+      ? (String(category.kind) as CategoryKind)
+      : defaultCategoryKind(String(category.name)),
   }));
 
   const customNames = new Set(customCategories.map((category) => category.name));
   const items: CategoryItem[] = [];
 
+  const itemUsage = (name: string) => usageMap.get(name) ?? emptyUsage();
+
   for (const category of customCategories) {
-    const usage = usageMap.get(category.name);
+    const usage = itemUsage(category.name);
 
     items.push({
       id: category.id,
       name: category.name,
       emoji: categoryEmoji(category.name, category.emoji),
+      color: categoryColor(category.name, category.color),
+      kind: category.kind,
       custom: true,
       builtIn: false,
-      expenseCount: usage?.expenseCount ?? 0,
-      totalSpent: usage?.totalSpent ?? 0,
-      monthCount: usage?.monthCount ?? 0,
-      monthSpent: usage?.monthSpent ?? 0,
+      expenseCount: usage.expenseCount,
+      totalSpent: usage.totalSpent,
+      monthCount: usage.monthCount,
+      monthSpent: usage.monthSpent,
+      incomeCount: usage.incomeCount,
+      totalIncome: usage.totalIncome,
+      monthIncomeCount: usage.monthIncomeCount,
+      monthIncome: usage.monthIncome,
       share: 0,
     });
   }
@@ -162,18 +218,24 @@ export async function getCategoriesData(
   for (const name of DEFAULT_CATEGORY_NAMES) {
     if (customNames.has(name)) continue;
 
-    const usage = usageMap.get(name);
+    const usage = itemUsage(name);
 
     items.push({
       id: null,
       name,
       emoji: categoryEmoji(name),
+      color: categoryColor(name),
+      kind: defaultCategoryKind(name),
       custom: false,
       builtIn: true,
-      expenseCount: usage?.expenseCount ?? 0,
-      totalSpent: usage?.totalSpent ?? 0,
-      monthCount: usage?.monthCount ?? 0,
-      monthSpent: usage?.monthSpent ?? 0,
+      expenseCount: usage.expenseCount,
+      totalSpent: usage.totalSpent,
+      monthCount: usage.monthCount,
+      monthSpent: usage.monthSpent,
+      incomeCount: usage.incomeCount,
+      totalIncome: usage.totalIncome,
+      monthIncomeCount: usage.monthIncomeCount,
+      monthIncome: usage.monthIncome,
       share: 0,
     });
   }
@@ -186,12 +248,18 @@ export async function getCategoriesData(
       id: null,
       name,
       emoji: categoryEmoji(name),
+      color: categoryColor(name),
+      kind: defaultCategoryKind(name),
       custom: false,
       builtIn: false,
       expenseCount: usage.expenseCount,
       totalSpent: usage.totalSpent,
       monthCount: usage.monthCount,
       monthSpent: usage.monthSpent,
+      incomeCount: usage.incomeCount,
+      totalIncome: usage.totalIncome,
+      monthIncomeCount: usage.monthIncomeCount,
+      monthIncome: usage.monthIncome,
       share: 0,
     });
   }
@@ -204,6 +272,7 @@ export async function getCategoriesData(
     (a, b) =>
       b.monthSpent - a.monthSpent ||
       b.totalSpent - a.totalSpent ||
+      b.monthIncome - a.monthIncome ||
       Number(b.custom) - Number(a.custom) ||
       a.name.localeCompare(b.name),
   );
@@ -247,10 +316,16 @@ export async function getCategoriesData(
     monthKey,
     monthLabel: monthLabel(monthKey),
     monthTotal,
+    monthIncomeTotal,
     items,
     totalCount: items.length,
     customCount: customCategories.length,
-    usedCount: items.filter((item) => item.monthCount > 0).length,
+    usedCount: items.filter(
+      (item) => item.monthCount > 0 || item.monthIncomeCount > 0,
+    ).length,
+    expenseKindCount: items.filter((item) => item.kind === "expense").length,
+    incomeKindCount: items.filter((item) => item.kind === "income").length,
+    bothKindCount: items.filter((item) => item.kind === "both").length,
     addMode: first(params.add) === "1",
     editingCategory,
     notice,

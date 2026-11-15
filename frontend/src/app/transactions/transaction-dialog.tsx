@@ -88,12 +88,14 @@ export function TransactionDialog({
   const startingType = transaction?.type ?? initialType;
 
   const expenseDefault =
-    categories.find((option) => option.name === "Food")?.name ??
-    categories[0]?.name ??
+    categories.find((option) => option.name === "Food" && option.kind !== "income")
+      ?.name ??
+    categories.find((option) => option.kind !== "income")?.name ??
     "Other";
   const incomeDefault =
-    categories.find((option) => option.name === "Salary")?.name ??
-    categories[0]?.name ??
+    categories.find((option) => option.name === "Salary" && option.kind !== "expense")
+      ?.name ??
+    categories.find((option) => option.kind !== "expense")?.name ??
     "Other";
 
   const defaultCategory = (nextType: TransactionType) =>
@@ -136,10 +138,18 @@ export function TransactionDialog({
   const canTransfer = wallets.length >= 2;
 
   const categoryOptions = (() => {
-    const options = [...categories];
+    // Transfers aren't categorised by kind, and the category the user already
+    // picked (or the one saved on this row) must never disappear underneath it.
+    const fits = (option: TransactionCategory) =>
+      type === "transfer" ||
+      option.kind === "both" ||
+      option.kind === type ||
+      option.name === category;
+
+    const options = categories.filter(fits);
 
     if (category && !options.some((option) => option.name === category)) {
-      options.unshift({ id: null, name: category, emoji: null });
+      options.unshift({ id: null, name: category, emoji: null, kind: "both" });
     }
 
     return options;

@@ -5,6 +5,12 @@ import Link from "next/link";
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 
+import {
+  CATEGORY_COLORS,
+  CATEGORY_KINDS,
+  categoryKindMeta,
+  type CategoryKind,
+} from "@/lib/categories";
 import type { CategoryItem } from "@/lib/data/categories";
 
 import { deleteCategory, saveCategory } from "./actions";
@@ -40,8 +46,13 @@ export function CategoryDialog({
   const [emoji, setEmoji] = useState(
     category?.emoji && category.emoji !== "💸" ? category.emoji : "",
   );
+  const [kind, setKind] = useState<CategoryKind>(category?.kind ?? "expense");
+  const [color, setColor] = useState<string>(
+    category?.color ?? CATEGORY_COLORS[0].value,
+  );
 
   const isEditing = Boolean(category);
+  const kindMeta = categoryKindMeta(kind);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 md:items-center">
@@ -78,11 +89,16 @@ export function CategoryDialog({
           {category?.id != null && (
             <input type="hidden" name="id" value={category.id} />
           )}
+          <input type="hidden" name="kind" value={kind} />
+          <input type="hidden" name="color" value={color} />
 
           <div className="flex items-center gap-3">
             <div
               className="grid size-14 shrink-0 place-items-center rounded-2xl text-2xl transition"
-              style={{ background: "var(--brand-soft)" }}
+              style={{
+                background: `color-mix(in srgb, ${color} 18%, transparent)`,
+                boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${color} 45%, transparent)`,
+              }}
             >
               {emoji || "🏷️"}
             </div>
@@ -135,6 +151,7 @@ export function CategoryDialog({
                   type="button"
                   onClick={() => setEmoji(choice)}
                   aria-label={`Use ${choice}`}
+                  aria-pressed={emoji === choice}
                   className="grid size-9 place-items-center rounded-lg text-lg transition hover:-translate-y-0.5 hover:bg-black/5 dark:hover:bg-white/10"
                   style={
                     emoji === choice
@@ -148,6 +165,79 @@ export function CategoryDialog({
                   {choice}
                 </button>
               ))}
+            </div>
+          </div>
+
+          <div>
+            <span className="text-sm font-medium">Kind</span>
+            <p className="mt-1 text-xs sw-muted">
+              Income categories are offered when you record money in, expense
+              categories when you record money out.
+            </p>
+            <div
+              className="mt-2 grid grid-cols-3 gap-2"
+              role="group"
+              aria-label="Category kind"
+            >
+              {CATEGORY_KINDS.map((option) => {
+                const optionMeta = categoryKindMeta(option);
+                const selected = kind === option;
+
+                return (
+                  <button
+                    key={option}
+                    id={`category-kind-${option}`}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => setKind(option)}
+                    className="rounded-xl border p-2.5 text-center transition"
+                    style={{
+                      borderColor: selected ? "var(--brand)" : "var(--line)",
+                      background: selected ? "var(--brand-soft)" : "transparent",
+                    }}
+                  >
+                    <span className="block text-lg leading-none">
+                      {optionMeta.emoji}
+                    </span>
+                    <span className="mt-1 block text-xs font-semibold">
+                      {optionMeta.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1.5 text-xs sw-muted">{kindMeta.blurb}</p>
+          </div>
+
+          <div>
+            <span className="text-sm font-medium">Colour</span>
+            <div
+              className="mt-2 flex flex-wrap gap-2"
+              role="group"
+              aria-label="Category colour"
+            >
+              {CATEGORY_COLORS.map((swatch) => {
+                const selected = color.toLowerCase() === swatch.value;
+
+                return (
+                  <button
+                    key={swatch.value}
+                    id={`category-color-${swatch.name.toLowerCase()}`}
+                    type="button"
+                    aria-label={`Use ${swatch.name}`}
+                    aria-pressed={selected}
+                    title={swatch.name}
+                    onClick={() => setColor(swatch.value)}
+                    className="size-8 rounded-full transition hover:scale-110"
+                    style={{
+                      background: swatch.value,
+                      boxShadow: selected
+                        ? "0 0 0 2px var(--panel), 0 0 0 4px var(--brand)"
+                        : "none",
+                    }}
+                  />
+                );
+              })}
             </div>
           </div>
 

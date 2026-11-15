@@ -422,7 +422,10 @@ export function BudgetsView({ data }: { data: BudgetsData }) {
                     <div className="flex items-start gap-3">
                       <div
                         className="grid size-10 shrink-0 place-items-center rounded-xl text-lg"
-                        style={{ background: "var(--panel)" }}
+                        style={{
+                          background: `color-mix(in srgb, ${row.color} 16%, transparent)`,
+                          boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${row.color} 35%, transparent)`,
+                        }}
                       >
                         {row.emoji}
                       </div>
@@ -444,7 +447,7 @@ export function BudgetsView({ data }: { data: BudgetsData }) {
                     </div>
 
                     <div className="mt-3">
-                      <Progress value={row.percentage} />
+                      <Progress value={row.percentage} color={row.color} />
                       <div className="mt-2 flex items-center justify-between text-xs">
                         <span className="sw-muted">
                           {formatMoney(row.budget, data.currency)} budget

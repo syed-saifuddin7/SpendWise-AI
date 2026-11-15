@@ -17,7 +17,7 @@ export default async function Page({ searchParams }: CategoriesPageProps) {
   return (
     <Shell
       title="Categories"
-      subtitle="Organize transactions your way."
+      subtitle="Organize transactions your way — an icon, a colour, and a side of the ledger."
       user={{ name: data.user.name, email: data.user.email }}
     >
       <CategoriesView data={data} />

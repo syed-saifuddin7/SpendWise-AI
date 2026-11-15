@@ -257,7 +257,13 @@ export function Bars({
   );
 }
 
-export function Progress({ value }: { value: number }) {
+export function Progress({
+  value,
+  color,
+}: {
+  value: number;
+  color?: string;
+}) {
   const clamped = Math.min(Math.max(value, 0), 100);
 
   return (
@@ -269,8 +275,9 @@ export function Progress({ value }: { value: number }) {
         className="sw-progress-fill h-full rounded-full"
         style={{
           width: `${clamped}%`,
-          background:
-            value > 90
+          background: color
+            ? `linear-gradient(90deg, color-mix(in srgb, ${color} 55%, white), ${color})`
+            : value > 90
               ? "linear-gradient(90deg, var(--warn), var(--danger))"
               : value > 75
                 ? "linear-gradient(90deg, var(--brand), var(--warn))"

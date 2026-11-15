@@ -2,7 +2,13 @@ import "server-only";
 
 import { redirect } from "next/navigation";
 
-import { DEFAULT_CATEGORY_NAMES, INCOME_CATEGORY_NAMES, categoryEmoji } from "@/lib/categories";
+import {
+  DEFAULT_CATEGORY_NAMES,
+  INCOME_CATEGORY_NAMES,
+  categoryEmoji,
+  defaultCategoryKind,
+  isCategoryKind,
+} from "@/lib/categories";
 import { todayKey } from "@/lib/dates";
 import {
   cadenceLabel,
@@ -87,23 +93,14 @@ function buildCategoryOptions(
 ) {
   const options = new Map<string, RecurringCategoryOption>();
 
-  for (const name of DEFAULT_CATEGORY_NAMES) {
-    options.set(name, {
-      id: null,
-      name,
-      emoji: categoryEmoji(name),
-      kind: name === "Other" ? "both" : "expense",
-    });
-  }
-
-  for (const name of INCOME_CATEGORY_NAMES) {
+  for (const name of [...DEFAULT_CATEGORY_NAMES, ...INCOME_CATEGORY_NAMES]) {
     if (options.has(name)) continue;
 
     options.set(name, {
       id: null,
       name,
       emoji: categoryEmoji(name),
-      kind: "income",
+      kind: defaultCategoryKind(name),
     });
   }
 
@@ -150,7 +147,7 @@ export async function getRecurringData(
         .limit(1),
       supabase
         .from("categories")
-        .select("id, name, emoji")
+        .select("id, name, emoji, kind")
         .eq("user_id", user.id)
         .order("name"),
       supabase
@@ -200,7 +197,9 @@ export async function getRecurringData(
       String(category.name),
       (category.emoji as string | null) ?? null,
     ),
-    kind: "both" as const,
+    kind: isCategoryKind(String(category.kind))
+      ? (String(category.kind) as "expense" | "income" | "both")
+      : defaultCategoryKind(String(category.name)),
   }));
 
   const generatedCounts = new Map<number, number>();
