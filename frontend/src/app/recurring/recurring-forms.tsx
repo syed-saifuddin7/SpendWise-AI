@@ -12,8 +12,11 @@ import type {
 import { formatExpenseDate, isValidDateKey, todayKey } from "@/lib/dates";
 import {
   RECURRING_FREQUENCIES,
+  RECURRING_TYPES,
   frequencyLabel,
   nextOccurrence,
+  recurringTypeMeta,
+  type RecurringType,
 } from "@/lib/recurring";
 
 import {
@@ -22,6 +25,25 @@ import {
   saveRecurring,
   toggleRecurring,
 } from "./actions";
+
+// The selected plan type decides which categories make sense: an income plan
+// should never offer "Rent", and an expense plan should never offer "Salary".
+// Elements tagged "both" (Other, custom categories, and the plan's own saved
+// category) stay visible either way.
+function categoriesForType(
+  options: RecurringCategoryOption[],
+  type: RecurringType,
+  keep?: string,
+) {
+  return options.filter(
+    (option) =>
+      option.kind === "both" || option.kind === type || option.name === keep,
+  );
+}
+
+function defaultCategoryFor(type: RecurringType) {
+  return type === "income" ? "Salary" : "Bills";
+}
 
 export function RecurringDialog({
   item,
@@ -37,10 +59,13 @@ export function RecurringDialog({
     undefined,
   );
   const [name, setName] = useState(item?.name ?? "");
+  const [type, setType] = useState<RecurringType>(item?.type ?? "expense");
+  const [category, setCategory] = useState(item?.category ?? "Bills");
   const [frequency, setFrequency] = useState(item?.frequency ?? "monthly");
   const [startDate, setStartDate] = useState(item?.startDate ?? todayKey());
 
   const isEditing = Boolean(item);
+  const meta = recurringTypeMeta(type);
   const previewDate =
     isValidDateKey(startDate) ? nextOccurrence(startDate, frequency) : null;
 
@@ -57,13 +82,11 @@ export function RecurringDialog({
         <div className="mb-5 flex items-start justify-between gap-4">
           <div>
             <h2 className="text-xl font-bold">
-              {isEditing ? "Edit recurring expense" : "Add recurring expense"}
-            </h2>
-            <p className="mt-1 text-sm sw-muted">
               {isEditing
-                ? "Saving recalculates the next run from the start date."
-                : "Set it once and SpendWise can generate it every cycle."}
-            </p>
+                ? `Edit recurring ${meta.label.toLowerCase()}`
+                : `Add recurring ${meta.label.toLowerCase()}`}
+            </h2>
+            <p className="mt-1 text-sm sw-muted">{meta.blurb}</p>
           </div>
           <Link
             href={closeHref}
@@ -77,6 +100,66 @@ export function RecurringDialog({
 
         <form action={formAction} className="space-y-4">
           {item?.id != null && <input type="hidden" name="id" value={item.id} />}
+          <input type="hidden" name="type" value={type} />
+
+          <div>
+            <span className="text-sm font-medium">Type</span>
+            <div
+              className="mt-2 grid grid-cols-2 gap-2"
+              role="group"
+              aria-label="Plan type"
+            >
+              {RECURRING_TYPES.map((option) => {
+                const optionMeta = recurringTypeMeta(option);
+                const selected = type === option;
+
+                return (
+                  <button
+                    key={option}
+                    id={`recurring-type-${option}`}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => {
+                      setType(option);
+
+                      const allowed = categoriesForType(
+                        categoryOptions,
+                        option,
+                        item?.category,
+                      );
+
+                      if (!allowed.some((entry) => entry.name === category)) {
+                        setCategory(
+                          allowed.some(
+                            (entry) => entry.name === defaultCategoryFor(option),
+                          )
+                            ? defaultCategoryFor(option)
+                            : (allowed[0]?.name ?? category),
+                        );
+                      }
+                    }}
+                    className="flex items-start gap-2 rounded-xl border p-3 text-left transition"
+                    style={{
+                      borderColor: selected ? "var(--brand)" : "var(--line)",
+                      background: selected ? "var(--brand-soft)" : "transparent",
+                    }}
+                  >
+                    <span className="text-lg leading-none">{optionMeta.emoji}</span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold">
+                        {optionMeta.label}
+                      </span>
+                      <span className="mt-0.5 block text-[11px] leading-4 sw-muted">
+                        {option === "income"
+                          ? "Money in, like salary"
+                          : "Money out, like rent"}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
           <div>
             <label htmlFor="recurring-name" className="text-sm font-medium">
@@ -89,7 +172,9 @@ export function RecurringDialog({
               maxLength={120}
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="e.g. Rent, Internet, Gym"
+              placeholder={
+                type === "income" ? "e.g. Salary, Retainer" : "e.g. Rent, Internet, Gym"
+              }
               className="mt-2 w-full rounded-xl border bg-transparent p-3 text-sm outline-none focus:border-[var(--brand)]"
               style={{ borderColor: "var(--line)" }}
             />
@@ -126,15 +211,18 @@ export function RecurringDialog({
                 id="recurring-category"
                 name="category"
                 required
-                defaultValue={item?.category ?? "Bills"}
+                value={category}
+                onChange={(event) => setCategory(event.target.value)}
                 className="mt-2 w-full rounded-xl border bg-transparent p-3 text-sm outline-none focus:border-[var(--brand)]"
                 style={{ borderColor: "var(--line)" }}
               >
-                {categoryOptions.map((category) => (
-                  <option key={category.name} value={category.name}>
-                    {category.emoji} {category.name}
-                  </option>
-                ))}
+                {categoriesForType(categoryOptions, type, item?.category).map(
+                  (option) => (
+                    <option key={option.name} value={option.name}>
+                      {option.emoji} {option.name}
+                    </option>
+                  ),
+                )}
               </select>
             </div>
 
@@ -196,7 +284,11 @@ export function RecurringDialog({
               rows={3}
               maxLength={500}
               defaultValue={item?.description ?? ""}
-              placeholder="Optional note about this recurring expense..."
+              placeholder={
+                type === "income"
+                  ? "Optional note about this recurring income..."
+                  : "Optional note about this recurring expense..."
+              }
               className="mt-2 w-full resize-none rounded-xl border bg-transparent p-3 text-sm outline-none focus:border-[var(--brand)]"
               style={{ borderColor: "var(--line)" }}
             />
@@ -213,10 +305,10 @@ export function RecurringDialog({
             />
             <p>
               {previewDate
-                ? `First expense will be generated on ${formatExpenseDate(
+                ? `First ${meta.label.toLowerCase()} will be generated on ${formatExpenseDate(
                     previewDate,
                   )}, one full ${frequencyLabel(frequency).toLowerCase()} cycle after the start date.`
-                : "Choose a start date to preview the first generated expense."}
+                : `Choose a start date to preview the first generated ${meta.label.toLowerCase()}.`}
             </p>
           </div>
 
@@ -268,8 +360,8 @@ function DeleteSubmit() {
     <button
       type="submit"
       disabled={pending}
-      aria-label="Delete recurring expense"
-      title="Delete recurring expense"
+      aria-label="Delete recurring plan"
+      title="Delete recurring plan"
       className="grid size-8 place-items-center rounded-lg transition hover:bg-black/5 disabled:opacity-50 dark:hover:bg-white/10"
       style={{ color: "var(--danger)" }}
     >
@@ -285,7 +377,7 @@ export function RecurringDeleteForm({ item }: { item: RecurringItem }) {
       onSubmit={(event) => {
         if (
           !window.confirm(
-            `Delete "${item.name}"? Expenses it already generated stay in your history.`,
+            `Delete "${item.name}"? Transactions it already generated stay in your history.`,
           )
         ) {
           event.preventDefault();
@@ -305,7 +397,7 @@ function ToggleSubmit({ active }: { active: boolean }) {
     <button
       type="submit"
       disabled={pending}
-      aria-label={active ? "Pause recurring expense" : "Resume recurring expense"}
+      aria-label={active ? "Pause recurring plan" : "Resume recurring plan"}
       title={active ? "Pause" : "Resume"}
       className="grid size-8 place-items-center rounded-lg transition hover:bg-black/5 disabled:opacity-50 dark:hover:bg-white/10"
       style={{ color: active ? "var(--warn)" : "var(--brand)" }}

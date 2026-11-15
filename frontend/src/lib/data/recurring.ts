@@ -2,14 +2,16 @@ import "server-only";
 
 import { redirect } from "next/navigation";
 
-import { DEFAULT_CATEGORY_NAMES, categoryEmoji } from "@/lib/categories";
+import { DEFAULT_CATEGORY_NAMES, INCOME_CATEGORY_NAMES, categoryEmoji } from "@/lib/categories";
 import { todayKey } from "@/lib/dates";
 import {
   cadenceLabel,
   daysUntil,
   isRecurringFrequency,
+  isRecurringType,
   monthlyEquivalent,
   type RecurringFrequency,
+  type RecurringType,
 } from "@/lib/recurring";
 import { createClient } from "@/lib/supabase/server";
 
@@ -17,11 +19,15 @@ export type RecurringCategoryOption = {
   id: number | null;
   name: string;
   emoji: string;
+  // Custom categories have no kind yet (that lands with 26.1), so they show
+  // for both plan types. "Other" is deliberately shared.
+  kind: "expense" | "income" | "both";
 };
 
 export type RecurringItem = {
   id: number;
   name: string;
+  type: RecurringType;
   amount: number;
   category: string;
   categoryId: number | null;
@@ -56,8 +62,12 @@ export type RecurringData = {
   activeCount: number;
   pausedCount: number;
   dueCount: number;
-  monthlyTotal: number;
-  annualTotal: number;
+  monthlyExpenseTotal: number;
+  monthlyIncomeTotal: number;
+  annualExpenseTotal: number;
+  annualIncomeTotal: number;
+  activeExpenseCount: number;
+  activeIncomeCount: number;
   nextItem: RecurringItem | null;
   categoryOptions: RecurringCategoryOption[];
   addMode: boolean;
@@ -78,7 +88,23 @@ function buildCategoryOptions(
   const options = new Map<string, RecurringCategoryOption>();
 
   for (const name of DEFAULT_CATEGORY_NAMES) {
-    options.set(name, { id: null, name, emoji: categoryEmoji(name) });
+    options.set(name, {
+      id: null,
+      name,
+      emoji: categoryEmoji(name),
+      kind: name === "Other" ? "both" : "expense",
+    });
+  }
+
+  for (const name of INCOME_CATEGORY_NAMES) {
+    if (options.has(name)) continue;
+
+    options.set(name, {
+      id: null,
+      name,
+      emoji: categoryEmoji(name),
+      kind: "income",
+    });
   }
 
   for (const category of userCategories) {
@@ -91,6 +117,7 @@ function buildCategoryOptions(
         id: row.categoryId,
         name: row.category,
         emoji: row.emoji,
+        kind: "both",
       });
     }
   }
@@ -173,6 +200,7 @@ export async function getRecurringData(
       String(category.name),
       (category.emoji as string | null) ?? null,
     ),
+    kind: "both" as const,
   }));
 
   const generatedCounts = new Map<number, number>();
@@ -192,6 +220,9 @@ export async function getRecurringData(
     const frequency = isRecurringFrequency(String(row.frequency))
       ? (String(row.frequency) as RecurringFrequency)
       : "monthly";
+    const type = isRecurringType(String(row.type))
+      ? (String(row.type) as RecurringType)
+      : "expense";
     const amount = Number(row.amount) || 0;
     const startDate = String(row.start_date ?? today);
     const nextRunDate = String(row.next_run_date ?? startDate);
@@ -200,7 +231,8 @@ export async function getRecurringData(
 
     return {
       id: Number(row.id),
-      name: String(row.name ?? "Recurring expense"),
+      name: String(row.name ?? "Recurring plan"),
+      type,
       amount,
       category: String(row.category ?? "Other"),
       categoryId:
@@ -237,7 +269,13 @@ export async function getRecurringData(
   );
 
   const activeItems = items.filter((item) => item.isActive);
-  const monthlyTotal = activeItems.reduce(
+  const activeExpenses = activeItems.filter((item) => item.type === "expense");
+  const activeIncomes = activeItems.filter((item) => item.type === "income");
+  const monthlyExpenseTotal = activeExpenses.reduce(
+    (total, item) => total + item.monthlyAmount,
+    0,
+  );
+  const monthlyIncomeTotal = activeIncomes.reduce(
     (total, item) => total + item.monthlyAmount,
     0,
   );
@@ -255,30 +293,30 @@ export async function getRecurringData(
   const notice: RecurringNotice | null = errorMessage
     ? { type: "error", message: errorMessage.slice(0, 200) }
     : saved === "added"
-      ? { type: "success", message: "Recurring expense added." }
+      ? { type: "success", message: "Recurring plan added." }
       : saved === "updated"
-        ? { type: "success", message: "Recurring expense updated." }
+        ? { type: "success", message: "Recurring plan updated." }
         : first(params.deleted) === "1"
           ? {
               type: "success",
               message:
-                "Recurring expense deleted. Expenses it already created stay in your history.",
+                "Recurring plan deleted. Transactions it already created stay in your history.",
             }
           : first(params.paused) === "1"
             ? {
                 type: "success",
-                message: "Recurring expense paused. It will not generate expenses.",
+                message: "Recurring plan paused. It will not generate anything.",
               }
             : first(params.resumed) === "1"
-              ? { type: "success", message: "Recurring expense resumed." }
+              ? { type: "success", message: "Recurring plan resumed." }
               : Number.isFinite(processed) && processed >= 0 && first(params.processed) !== undefined
                 ? {
                     type: "success",
                     message:
                       processed > 0
-                        ? `Generated ${processed} expense${
+                        ? `Generated ${processed} transaction${
                             processed === 1 ? "" : "s"
-                          } from due recurring items.`
+                          } from due recurring plans.`
                         : "Nothing is due right now. Your schedule is up to date.",
                   }
                 : null;
@@ -298,8 +336,12 @@ export async function getRecurringData(
     activeCount: activeItems.length,
     pausedCount: items.length - activeItems.length,
     dueCount: activeItems.filter((item) => item.dueNow).length,
-    monthlyTotal,
-    annualTotal: monthlyTotal * 12,
+    monthlyExpenseTotal,
+    monthlyIncomeTotal,
+    annualExpenseTotal: monthlyExpenseTotal * 12,
+    annualIncomeTotal: monthlyIncomeTotal * 12,
+    activeExpenseCount: activeExpenses.length,
+    activeIncomeCount: activeIncomes.length,
     nextItem:
       activeItems
         .slice()

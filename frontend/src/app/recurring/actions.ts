@@ -6,8 +6,10 @@ import { redirect } from "next/navigation";
 import { isValidDateKey, todayKey } from "@/lib/dates";
 import {
   isRecurringFrequency,
+  isRecurringType,
   nextOccurrence,
   type RecurringFrequency,
+  type RecurringType,
 } from "@/lib/recurring";
 import { createClient } from "@/lib/supabase/server";
 
@@ -42,7 +44,7 @@ function friendlyError(message: string) {
   const text = message.toLowerCase();
 
   if (text.includes("duplicate") || text.includes("unique")) {
-    return "A recurring expense with that name already exists.";
+    return "A recurring plan with that name already exists.";
   }
 
   return message;
@@ -54,6 +56,7 @@ export async function saveRecurring(
 ): Promise<RecurringFormState> {
   const id = readText(formData, "id");
   const name = readText(formData, "name").replace(/\s+/g, " ");
+  const typeValue = readText(formData, "type") || "expense";
   const amountValue = readText(formData, "amount");
   const category = readText(formData, "category");
   const description = readText(formData, "description");
@@ -61,12 +64,18 @@ export async function saveRecurring(
   const startDate = readText(formData, "start_date");
 
   if (!name) {
-    return { error: "Enter a name for this recurring expense." };
+    return { error: "Enter a name for this recurring plan." };
   }
 
   if (name.length > 120) {
     return { error: "Name must be 120 characters or fewer." };
   }
+
+  if (!isRecurringType(typeValue)) {
+    return { error: "Choose whether this plan is income or an expense." };
+  }
+
+  const type: RecurringType = typeValue;
 
   const amount = Number(amountValue.replace(/,/g, ""));
 
@@ -121,7 +130,7 @@ export async function saveRecurring(
 
   if (categoryError) {
     return {
-      error: `Could not save the recurring expense: ${categoryError.message}`,
+      error: `Could not save the recurring plan: ${categoryError.message}`,
     };
   }
 
@@ -131,6 +140,7 @@ export async function saveRecurring(
 
   const record = {
     name,
+    type,
     amount,
     category,
     category_id: categoryRow?.id ?? null,
@@ -142,7 +152,7 @@ export async function saveRecurring(
 
   if (id) {
     if (!/^\d+$/.test(id)) {
-      return { error: "That recurring expense could not be found." };
+      return { error: "That recurring plan could not be found." };
     }
 
     const { data: existing, error: existingError } = await supabase
@@ -154,12 +164,12 @@ export async function saveRecurring(
 
     if (existingError) {
       return {
-        error: `Could not update the recurring expense: ${existingError.message}`,
+        error: `Could not update the recurring plan: ${existingError.message}`,
       };
     }
 
     if (!existing) {
-      return { error: "That recurring expense could not be found." };
+      return { error: "That recurring plan could not be found." };
     }
 
     const { error } = await supabase
@@ -171,7 +181,7 @@ export async function saveRecurring(
     if (error) {
       return {
         error: friendlyError(
-          `Could not update the recurring expense: ${error.message}`,
+          `Could not update the recurring plan: ${error.message}`,
         ),
       };
     }
@@ -190,7 +200,7 @@ export async function saveRecurring(
   if (error) {
     return {
       error: friendlyError(
-        `Could not add the recurring expense: ${error.message}`,
+        `Could not add the recurring plan: ${error.message}`,
       ),
     };
   }
@@ -204,7 +214,7 @@ export async function toggleRecurring(formData: FormData) {
   const active = readText(formData, "active") === "1";
 
   if (!/^\d+$/.test(id)) {
-    redirect(recurringUrl({ error: "That recurring expense could not be found." }));
+    redirect(recurringUrl({ error: "That recurring plan could not be found." }));
   }
 
   const supabase = await createClient();
@@ -227,7 +237,7 @@ export async function toggleRecurring(formData: FormData) {
   if (error) {
     redirect(
       recurringUrl({
-        error: `Could not update the recurring expense: ${error.message}`,
+        error: `Could not update the recurring plan: ${error.message}`,
       }),
     );
   }
@@ -240,7 +250,7 @@ export async function deleteRecurring(formData: FormData) {
   const id = readText(formData, "id");
 
   if (!/^\d+$/.test(id)) {
-    redirect(recurringUrl({ error: "That recurring expense could not be found." }));
+    redirect(recurringUrl({ error: "That recurring plan could not be found." }));
   }
 
   const supabase = await createClient();
@@ -266,7 +276,7 @@ export async function deleteRecurring(formData: FormData) {
   if (detachError) {
     redirect(
       recurringUrl({
-        error: `Could not keep the generated expenses: ${detachError.message}`,
+        error: `Could not keep the generated transactions: ${detachError.message}`,
       }),
     );
   }
@@ -280,7 +290,7 @@ export async function deleteRecurring(formData: FormData) {
   if (error) {
     redirect(
       recurringUrl({
-        error: `Could not delete the recurring expense: ${error.message}`,
+        error: `Could not delete the recurring plan: ${error.message}`,
       }),
     );
   }
@@ -320,14 +330,14 @@ export async function processDueRecurring() {
   if (dueError) {
     redirect(
       recurringUrl({
-        error: `Could not load due recurring expenses: ${dueError.message}`,
+        error: `Could not load due recurring plans: ${dueError.message}`,
       }),
     );
   }
 
   let created = 0;
 
-  // Recurring plans do not pin a wallet yet, so generated expenses land in the
+  // Recurring plans do not pin a wallet yet, so generated transactions land in the
   // user's first active wallet. Plans still work without one (wallet_id null).
   const { data: walletRows, error: walletError } = await supabase
     .from("wallets")
@@ -371,7 +381,7 @@ export async function processDueRecurring() {
         .from("transactions")
         .insert({
           user_id: user.id,
-          type: "expense",
+          type: isRecurringType(String(item.type)) ? String(item.type) : "expense",
           name: item.name,
           amount: item.amount,
           category: item.category,

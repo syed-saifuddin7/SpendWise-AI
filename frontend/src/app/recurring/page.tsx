@@ -17,7 +17,7 @@ export default async function Page({ searchParams }: RecurringPageProps) {
   return (
     <Shell
       title="Recurring"
-      subtitle="Predictable expenses, handled before you have to think about them."
+      subtitle="Predictable money in and out, handled before you have to think about it."
       user={{ name: data.user.name, email: data.user.email }}
     >
       <RecurringView data={data} />

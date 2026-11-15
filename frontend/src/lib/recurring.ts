@@ -4,6 +4,38 @@ export const RECURRING_FREQUENCIES = ["weekly", "monthly", "yearly"] as const;
 
 export type RecurringFrequency = (typeof RECURRING_FREQUENCIES)[number];
 
+export const RECURRING_TYPES = ["expense", "income"] as const;
+
+export type RecurringType = (typeof RECURRING_TYPES)[number];
+
+export const RECURRING_TYPE_META: Record<
+  RecurringType,
+  { label: string; emoji: string; blurb: string }
+> = {
+  expense: {
+    label: "Expense",
+    emoji: "💸",
+    blurb: "Rent, subscriptions, bills — money that leaves on a schedule.",
+  },
+  income: {
+    label: "Income",
+    emoji: "💵",
+    blurb: "Salary, retainers, interest — money that arrives on a schedule.",
+  },
+};
+
+export function isRecurringType(
+  value: string | null | undefined,
+): value is RecurringType {
+  return value === "expense" || value === "income";
+}
+
+export function recurringTypeMeta(type: string | null | undefined) {
+  return isRecurringType(type)
+    ? RECURRING_TYPE_META[type]
+    : RECURRING_TYPE_META.expense;
+}
+
 const FREQUENCY_LABELS: Record<RecurringFrequency, string> = {
   weekly: "Weekly",
   monthly: "Monthly",

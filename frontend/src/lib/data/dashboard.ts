@@ -12,8 +12,10 @@ import type {
   GoalContributionRecord,
   GoalRecord,
   TransactionRecord,
+  WalletRecord,
 } from "@/lib/types";
 import { summarizeGoal, type GoalStatus } from "@/lib/goals";
+import { summarizeWallet } from "@/lib/wallets";
 
 export type CategoryTotal = {
   name: string;
@@ -64,6 +66,8 @@ export type DashboardData = {
   goals: DashboardGoal[];
   goalsSaved: number;
   goalsTarget: number;
+  totalBalance: number;
+  walletCount: number;
 };
 
 function pad(value: number) {
@@ -105,6 +109,8 @@ export async function getDashboardData(): Promise<DashboardData> {
     categoryBudgetsResult,
     goalsResult,
     goalContributionsResult,
+    walletsResult,
+    ledgerResult,
   ] = await Promise.all([
     supabase
       .from("transactions")
@@ -141,6 +147,17 @@ export async function getDashboardData(): Promise<DashboardData> {
       .from("goal_contributions")
       .select("goal_id, amount, date")
       .eq("user_id", user.id),
+    supabase
+      .from("wallets")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("is_active", true)
+      .order("id"),
+    // Balances are all-time, so the month window above can't answer them.
+    supabase
+      .from("transactions")
+      .select("type, amount, date, wallet_id, transfer_wallet_id")
+      .eq("user_id", user.id),
   ]);
 
   if (transactionsResult.error) {
@@ -171,6 +188,14 @@ export async function getDashboardData(): Promise<DashboardData> {
     throw new Error(
       `Could not load goal contributions: ${goalContributionsResult.error.message}`,
     );
+  }
+
+  if (walletsResult.error) {
+    throw new Error(`Could not load wallets: ${walletsResult.error.message}`);
+  }
+
+  if (ledgerResult.error) {
+    throw new Error(`Could not load balances: ${ledgerResult.error.message}`);
   }
 
   const today = `${monthKey}-${pad(now.getDate())}`;
@@ -221,6 +246,20 @@ export async function getDashboardData(): Promise<DashboardData> {
   );
   const settings = settingsResult.data?.[0];
   const currency = (settings?.currency as string | null) ?? "INR";
+
+  // Total balance across active wallets. Transfers cancel out at the account
+  // level, but summarizeWallet handles both sides per wallet.
+  const wallets = (walletsResult.data ?? []) as WalletRecord[];
+  const ledger = (ledgerResult.data ?? []) as Pick<
+    TransactionRecord,
+    "type" | "amount" | "date" | "wallet_id" | "transfer_wallet_id"
+  >[];
+  const totalBalance = wallets.reduce(
+    (total, wallet) =>
+      total +
+      summarizeWallet(wallet, ledger, monthStart, nextMonthStart).balance,
+    0,
+  );
 
   const monthlyBudget =
     Number(budgetResult.data?.[0]?.amount ?? 0) ||
@@ -332,5 +371,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     goals,
     goalsSaved,
     goalsTarget,
+    totalBalance,
+    walletCount: wallets.length,
   };
 }

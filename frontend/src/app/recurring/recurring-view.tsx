@@ -14,7 +14,10 @@ import { Metric, Section } from "@/components/spendwise/ui";
 import type { RecurringData, RecurringItem } from "@/lib/data/recurring";
 import { formatExpenseDate } from "@/lib/dates";
 import { formatMoney } from "@/lib/finance";
-import { frequencyLabel } from "@/lib/recurring";
+import {
+  frequencyLabel,
+  recurringTypeMeta,
+} from "@/lib/recurring";
 
 import {
   ProcessDueForm,
@@ -29,6 +32,27 @@ function FrequencyBadge({ item }: { item: RecurringItem }) {
       style={{ background: "var(--brand-soft)", color: "var(--brand)" }}
     >
       {frequencyLabel(item.frequency)}
+    </span>
+  );
+}
+
+function TypeBadge({ item }: { item: RecurringItem }) {
+  const meta = recurringTypeMeta(item.type);
+  const income = item.type === "income";
+
+  return (
+    <span
+      className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+      style={
+        income
+          ? {
+              background: "color-mix(in srgb, var(--brand) 12%, transparent)",
+              color: "var(--brand)",
+            }
+          : { background: "var(--bg)", color: "var(--muted)" }
+      }
+    >
+      {meta.emoji} {meta.label}
     </span>
   );
 }
@@ -104,6 +128,7 @@ function RecurringCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="truncate font-semibold">{item.name}</span>
+            <TypeBadge item={item} />
             <FrequencyBadge item={item} />
             <StatusBadge item={item} />
             <DueBadge item={item} />
@@ -115,7 +140,15 @@ function RecurringCard({
         </div>
 
         <div className="shrink-0 text-right">
-          <div className="font-bold">{formatMoney(item.amount, currency)}</div>
+          <div
+            className="font-bold"
+            style={
+              item.type === "income" ? { color: "var(--brand)" } : undefined
+            }
+          >
+            {item.type === "income" ? "+" : "−"}
+            {formatMoney(item.amount, currency)}
+          </div>
           <div className="text-[11px] sw-muted">
             ≈ {formatMoney(item.monthlyAmount, currency)}/mo
           </div>
@@ -155,8 +188,9 @@ function RecurringCard({
         <div className="text-[11px] sw-muted">
           {item.generatedCount > 0 ? (
             <>
-              {item.generatedCount} expense{item.generatedCount === 1 ? "" : "s"}{" "}
-              generated
+              {item.generatedCount}{" "}
+              {item.type === "income" ? "income" : "expense"}
+              {item.generatedCount === 1 ? "" : "s"} generated
               {item.lastGeneratedDate
                 ? ` · last ${formatExpenseDate(item.lastGeneratedDate)}`
                 : ""}
@@ -171,7 +205,7 @@ function RecurringCard({
             href={`/recurring?edit=${item.id}`}
             scroll={false}
             aria-label={`Edit ${item.name}`}
-            title="Edit recurring expense"
+            title="Edit recurring plan"
             className="grid size-8 place-items-center rounded-lg transition hover:bg-black/5 dark:hover:bg-white/10"
           >
             <Pencil size={14} />
@@ -207,7 +241,8 @@ export function RecurringView({ data }: { data: RecurringData }) {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm sw-muted">
           <span className="sw-dot mr-2 align-middle" />
-          Set predictable bills once. SpendWise generates them on schedule.
+          Set predictable money in and out once. SpendWise generates it on
+          schedule.
         </p>
         <div className="flex flex-wrap items-center gap-2">
           {data.dueCount > 0 && <ProcessDueForm dueCount={data.dueCount} />}
@@ -223,7 +258,7 @@ export function RecurringView({ data }: { data: RecurringData }) {
         </div>
       </div>
 
-      <div className="sw-stagger grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="sw-stagger grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <Metric
           label="Active plans"
           value={String(data.activeCount)}
@@ -235,9 +270,19 @@ export function RecurringView({ data }: { data: RecurringData }) {
           icon={<Repeat2 size={17} />}
         />
         <Metric
-          label="Monthly committed"
-          value={formatMoney(data.monthlyTotal, data.currency)}
-          note={`≈ ${formatMoney(data.annualTotal, data.currency)} per year`}
+          label="Monthly bills"
+          value={formatMoney(data.monthlyExpenseTotal, data.currency)}
+          note={`${data.activeExpenseCount} expense plan${
+            data.activeExpenseCount === 1 ? "" : "s"
+          } · ≈ ${formatMoney(data.annualExpenseTotal, data.currency)}/yr`}
+          icon={<WalletCards size={17} />}
+        />
+        <Metric
+          label="Monthly income"
+          value={formatMoney(data.monthlyIncomeTotal, data.currency)}
+          note={`${data.activeIncomeCount} income plan${
+            data.activeIncomeCount === 1 ? "" : "s"
+          } · ≈ ${formatMoney(data.annualIncomeTotal, data.currency)}/yr`}
           icon={<WalletCards size={17} />}
         />
         <Metric
@@ -303,9 +348,9 @@ export function RecurringView({ data }: { data: RecurringData }) {
               >
                 <Repeat2 size={22} />
               </div>
-              <p className="mt-3 font-semibold">No recurring expenses yet</p>
+              <p className="mt-3 font-semibold">No recurring plans yet</p>
               <p className="mx-auto mt-1 max-w-sm text-sm sw-muted">
-                Rent, internet, subscriptions, salary-day savings — anything
+                Rent, internet, subscriptions, salary, retainers — anything
                 predictable can live here.
               </p>
               <Link
@@ -333,8 +378,9 @@ export function RecurringView({ data }: { data: RecurringData }) {
           <b>How automation works</b>
           <ul className="mt-2 space-y-1 text-sm sw-muted">
             <li>
-              • The first expense is generated one full cycle after the start
-              date, then the schedule advances automatically.
+              • The first transaction is generated one full cycle after the
+              start date, then the schedule advances automatically. Income plans
+              post income; expense plans post expenses.
             </li>
             <li>
               • Monthly plans keep the same day and clamp short months; yearly
@@ -342,7 +388,7 @@ export function RecurringView({ data }: { data: RecurringData }) {
             </li>
             <li>
               • Duplicate protection means processing twice never creates the
-              same expense twice. Pausing stops generation without deleting
+              same transaction twice. Pausing stops generation without deleting
               history.
             </li>
           </ul>

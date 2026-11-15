@@ -1,6 +1,7 @@
 import {
   ArrowDownRight,
   ArrowLeftRight,
+  Landmark,
   Sparkles,
   Target,
   TrendingDown,
@@ -71,7 +72,16 @@ export default async function Page() {
       subtitle="Here's how your money is looking this month."
       user={{ name: data.user.name, email: data.user.email }}
     >
-      <div className="sw-stagger grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="sw-stagger grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <Metric
+          label="Total balance"
+          value={formatMoney(data.totalBalance, data.currency)}
+          note={`${data.walletCount} wallet${
+            data.walletCount === 1 ? "" : "s"
+          } · opening balances included`}
+          good={data.totalBalance >= 0}
+          icon={<Landmark size={17} />}
+        />
         <Metric
           label="Spent this month"
           value={formatMoney(data.totalSpent, data.currency)}
