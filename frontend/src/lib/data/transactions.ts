@@ -2,7 +2,11 @@ import "server-only";
 
 import { redirect } from "next/navigation";
 
-import { DEFAULT_CATEGORY_NAMES } from "@/lib/categories";
+import {
+  DEFAULT_CATEGORY_NAMES,
+  INCOME_CATEGORY_NAMES,
+  TRANSFER_CATEGORY_NAME,
+} from "@/lib/categories";
 import {
   currentMonthKey,
   monthLabel,
@@ -11,13 +15,36 @@ import {
   shiftMonth,
 } from "@/lib/dates";
 import { createClient } from "@/lib/supabase/server";
-import type { ExpenseRecord } from "@/lib/types";
+import type {
+  TransactionRecord,
+  TransactionType,
+  WalletRecord,
+  WalletType,
+} from "@/lib/types";
+import { isTransactionType } from "@/lib/types";
 
 export type TransactionCategory = {
   id: number | null;
   name: string;
   emoji: string | null;
 };
+
+export type TransactionWallet = {
+  id: number;
+  name: string;
+  type: WalletType;
+  currency: string;
+  isActive: boolean;
+};
+
+export type LedgerTransaction = TransactionRecord & {
+  walletName: string | null;
+  walletType: WalletType | null;
+  transferWalletName: string | null;
+  transferWalletType: WalletType | null;
+};
+
+export type TypeCounts = Record<TransactionType, number>;
 
 export type TransactionsData = {
   user: {
@@ -32,20 +59,30 @@ export type TransactionsData = {
   nextMonth: string;
   nextDisabled: boolean;
   isCurrentMonth: boolean;
-  expenses: ExpenseRecord[];
-  monthExpenses: ExpenseRecord[];
+  transactions: LedgerTransaction[];
+  monthTransactions: LedgerTransaction[];
+  monthIncome: number;
+  monthSpending: number;
+  monthNet: number;
+  totalIncome: number;
   totalSpent: number;
-  monthTotal: number;
+  netFlow: number;
+  monthCounts: TypeCounts;
+  counts: TypeCounts;
   count: number;
   monthCount: number;
   dailyAverage: number;
   topCategory: { name: string; amount: number } | null;
   categories: TransactionCategory[];
   filterCategories: string[];
+  wallets: TransactionWallet[];
   categoryFilter: string | null;
+  typeFilter: TransactionType | null;
+  walletFilter: number | null;
   query: string;
   addMode: boolean;
-  editingExpense: ExpenseRecord | null;
+  addKind: TransactionType;
+  editingTransaction: LedgerTransaction | null;
   notice: { type: "success" | "error"; message: string } | null;
 };
 
@@ -55,11 +92,24 @@ function first(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function sum(records: ExpenseRecord[]) {
-  return records.reduce(
-    (total, record) => total + (Number(record.amount) || 0),
-    0,
-  );
+function emptyCounts(): TypeCounts {
+  return { expense: 0, income: 0, transfer: 0 };
+}
+
+function sumByType(transactions: LedgerTransaction[], type: TransactionType) {
+  return transactions
+    .filter((transaction) => transaction.type === type)
+    .reduce((total, transaction) => total + (Number(transaction.amount) || 0), 0);
+}
+
+function countByType(transactions: LedgerTransaction[]) {
+  const counts = emptyCounts();
+
+  for (const transaction of transactions) {
+    counts[transaction.type] += 1;
+  }
+
+  return counts;
 }
 
 export async function getTransactionsData(
@@ -82,33 +132,43 @@ export async function getTransactionsData(
   const query = (first(params.q) ?? "").trim().slice(0, 80);
   const categoryFilter =
     (first(params.category) ?? "").trim().slice(0, 60) || null;
+  const rawType = (first(params.type) ?? "").trim();
+  const typeFilter = isTransactionType(rawType) ? rawType : null;
+  const walletIdValue = (first(params.wallet) ?? "").trim();
+  const walletFilter =
+    /^\d+$/.test(walletIdValue) && Number(walletIdValue) > 0
+      ? Number(walletIdValue)
+      : null;
 
   const { start, nextStart, daysInMonth } = monthRange(monthKey);
 
-  const [settingsResult, categoriesResult, expensesResult] = await Promise.all([
-    supabase
-      .from("user_settings")
-      .select("display_name, currency")
-      .eq("user_id", user.id)
-      .limit(1),
-    supabase
-      .from("categories")
-      .select("id, name, emoji")
-      .eq("user_id", user.id)
-      .order("name"),
-    supabase
-      .from("expenses")
-      .select("*")
-      .eq("user_id", user.id)
-      .gte("date", start)
-      .lt("date", nextStart)
-      .order("date", { ascending: false })
-      .order("id", { ascending: false }),
-  ]);
-
-  if (expensesResult.error) {
-    throw new Error(`Could not load expenses: ${expensesResult.error.message}`);
-  }
+  const [settingsResult, categoriesResult, walletsResult, transactionsResult] =
+    await Promise.all([
+      supabase
+        .from("user_settings")
+        .select("display_name, currency")
+        .eq("user_id", user.id)
+        .limit(1),
+      supabase
+        .from("categories")
+        .select("id, name, emoji")
+        .eq("user_id", user.id)
+        .order("name"),
+      supabase
+        .from("wallets")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("is_active", { ascending: false })
+        .order("name"),
+      supabase
+        .from("transactions")
+        .select("*")
+        .eq("user_id", user.id)
+        .gte("date", start)
+        .lt("date", nextStart)
+        .order("date", { ascending: false })
+        .order("id", { ascending: false }),
+    ]);
 
   if (settingsResult.error) {
     throw new Error(`Could not load settings: ${settingsResult.error.message}`);
@@ -118,9 +178,18 @@ export async function getTransactionsData(
     throw new Error(`Could not load categories: ${categoriesResult.error.message}`);
   }
 
+  if (walletsResult.error) {
+    throw new Error(`Could not load wallets: ${walletsResult.error.message}`);
+  }
+
+  if (transactionsResult.error) {
+    throw new Error(
+      `Could not load transactions: ${transactionsResult.error.message}`,
+    );
+  }
+
   const settings = settingsResult.data?.[0];
   const currency = (settings?.currency as string | null) ?? "INR";
-  const monthExpenses = (expensesResult.data ?? []) as ExpenseRecord[];
 
   const userCategories: TransactionCategory[] = (
     categoriesResult.data ?? []
@@ -130,37 +199,90 @@ export async function getTransactionsData(
     emoji: (category.emoji as string | null) ?? null,
   }));
 
-  let expenses = monthExpenses;
+  const wallets: TransactionWallet[] = ((walletsResult.data ?? []) as WalletRecord[]).map(
+    (wallet) => ({
+      id: Number(wallet.id),
+      name: String(wallet.name),
+      type: wallet.type,
+      currency: String(wallet.currency ?? currency),
+      isActive: Boolean(wallet.is_active),
+    }),
+  );
+
+  const walletById = new Map(wallets.map((wallet) => [wallet.id, wallet]));
+
+  const monthTransactions: LedgerTransaction[] = (
+    (transactionsResult.data ?? []) as TransactionRecord[]
+  ).map((transaction) => {
+    const wallet = transaction.wallet_id
+      ? walletById.get(Number(transaction.wallet_id))
+      : undefined;
+    const transferWallet = transaction.transfer_wallet_id
+      ? walletById.get(Number(transaction.transfer_wallet_id))
+      : undefined;
+
+    return {
+      ...transaction,
+      walletName: wallet?.name ?? null,
+      walletType: wallet?.type ?? null,
+      transferWalletName: transferWallet?.name ?? null,
+      transferWalletType: transferWallet?.type ?? null,
+    };
+  });
+
+  let transactions = monthTransactions;
+
+  if (typeFilter) {
+    transactions = transactions.filter(
+      (transaction) => transaction.type === typeFilter,
+    );
+  }
 
   if (categoryFilter) {
-    expenses = expenses.filter(
-      (expense) => expense.category === categoryFilter,
+    transactions = transactions.filter(
+      (transaction) => transaction.category === categoryFilter,
+    );
+  }
+
+  if (walletFilter) {
+    transactions = transactions.filter(
+      (transaction) =>
+        Number(transaction.wallet_id) === walletFilter ||
+        Number(transaction.transfer_wallet_id) === walletFilter,
     );
   }
 
   if (query) {
     const needle = query.toLowerCase();
 
-    expenses = expenses.filter((expense) =>
-      [expense.name, expense.description ?? "", expense.category].some((value) =>
-        value.toLowerCase().includes(needle),
-      ),
+    transactions = transactions.filter((transaction) =>
+      [
+        transaction.name,
+        transaction.description ?? "",
+        transaction.type === "transfer" ? TRANSFER_CATEGORY_NAME : transaction.category,
+        transaction.walletName ?? "",
+        transaction.transferWalletName ?? "",
+      ].some((value) => value.toLowerCase().includes(needle)),
     );
   }
 
-  const monthTotal = sum(monthExpenses);
-  const totalSpent = sum(expenses);
+  const monthIncome = sumByType(monthTransactions, "income");
+  const monthSpending = sumByType(monthTransactions, "expense");
+  const totalIncome = sumByType(transactions, "income");
+  const totalSpent = sumByType(transactions, "expense");
 
   const isCurrentMonth = monthKey === currentMonth;
   const daysElapsed = isCurrentMonth ? today.getDate() : daysInMonth;
 
   const categoryTotals = new Map<string, number>();
 
-  for (const expense of monthExpenses) {
+  for (const transaction of monthTransactions) {
+    if (transaction.type !== "expense") continue;
+
+    const name = transaction.category || "Other";
     categoryTotals.set(
-      expense.category,
-      (categoryTotals.get(expense.category) ?? 0) +
-        (Number(expense.amount) || 0),
+      name,
+      (categoryTotals.get(name) ?? 0) + (Number(transaction.amount) || 0),
     );
   }
 
@@ -171,14 +293,17 @@ export async function getTransactionsData(
   const filterCategories = [
     ...new Set([
       ...userCategories.map((category) => category.name),
-      ...monthExpenses.map((expense) => expense.category).filter(Boolean),
+      ...monthTransactions
+        .filter((transaction) => transaction.type !== "transfer")
+        .map((transaction) => transaction.category)
+        .filter(Boolean),
     ]),
   ].sort((a, b) => a.localeCompare(b));
 
   const categories: TransactionCategory[] = (() => {
     const options = new Map<string, TransactionCategory>();
 
-    for (const name of DEFAULT_CATEGORY_NAMES) {
+    for (const name of [...DEFAULT_CATEGORY_NAMES, ...INCOME_CATEGORY_NAMES]) {
       options.set(name, { id: null, name, emoji: null });
     }
 
@@ -186,25 +311,28 @@ export async function getTransactionsData(
       options.set(category.name, category);
     }
 
-    for (const expense of monthExpenses) {
-      if (expense.category && !options.has(expense.category)) {
-        options.set(expense.category, {
+    for (const transaction of monthTransactions) {
+      if (
+        transaction.type !== "transfer" &&
+        transaction.category &&
+        !options.has(transaction.category)
+      ) {
+        options.set(transaction.category, {
           id: null,
-          name: expense.category,
+          name: transaction.category,
           emoji: null,
         });
       }
     }
 
-    return [...options.values()].sort((a, b) =>
-      a.name.localeCompare(b.name),
-    );
+    return [...options.values()].sort((a, b) => a.name.localeCompare(b.name));
   })();
 
   const editingId = first(params.edit);
-  const editingExpense = editingId
-    ? (monthExpenses.find((expense) => String(expense.id) === editingId) ??
-      null)
+  const editingTransaction = editingId
+    ? (monthTransactions.find(
+        (transaction) => String(transaction.id) === editingId,
+      ) ?? null)
     : null;
 
   const noticeType = first(params.error)
@@ -226,12 +354,13 @@ export async function getTransactionsData(
         ? {
             type: "success" as const,
             message: first(params.saved)
-              ? "Expense saved."
-              : "Expense deleted.",
+              ? "Transaction saved."
+              : "Transaction deleted.",
           }
         : null;
 
   const nextMonth = shiftMonth(monthKey, 1);
+  const rawKind = (first(params.kind) ?? "").trim();
 
   return {
     user: {
@@ -249,20 +378,30 @@ export async function getTransactionsData(
     nextMonth,
     nextDisabled: nextMonth > currentMonth,
     isCurrentMonth,
-    expenses,
-    monthExpenses,
+    transactions,
+    monthTransactions,
+    monthIncome,
+    monthSpending,
+    monthNet: monthIncome - monthSpending,
+    totalIncome,
     totalSpent,
-    monthTotal,
-    count: expenses.length,
-    monthCount: monthExpenses.length,
-    dailyAverage: daysElapsed > 0 ? totalSpent / daysElapsed : 0,
+    netFlow: totalIncome - totalSpent,
+    monthCounts: countByType(monthTransactions),
+    counts: countByType(transactions),
+    count: transactions.length,
+    monthCount: monthTransactions.length,
+    dailyAverage: daysElapsed > 0 ? monthSpending / daysElapsed : 0,
     topCategory,
     categories,
     filterCategories,
+    wallets,
     categoryFilter,
+    typeFilter,
+    walletFilter,
     query,
     addMode: first(params.add) === "1",
-    editingExpense,
+    addKind: isTransactionType(rawKind) ? rawKind : "expense",
+    editingTransaction,
     notice,
   };
 }

@@ -143,8 +143,14 @@ export async function saveCategory(
       return { error: friendlyError(`Could not update the category: ${error.message}`) };
     }
 
-    // Keep linked expenses and category budgets in sync with the new name.
-    const [expenseSync, budgetSync] = await Promise.all([
+    // Keep linked transactions, archived expenses and category budgets in sync
+    // with the new name.
+    const [transactionSync, expenseSync, budgetSync] = await Promise.all([
+      supabase
+        .from("transactions")
+        .update({ category: name })
+        .eq("category_id", id)
+        .eq("user_id", user.id),
       supabase
         .from("expenses")
         .update({ category: name })
@@ -157,9 +163,15 @@ export async function saveCategory(
         .eq("user_id", user.id),
     ]);
 
+    if (transactionSync.error) {
+      return {
+        error: `Category renamed, but linked transactions could not be updated: ${transactionSync.error.message}`,
+      };
+    }
+
     if (expenseSync.error) {
       return {
-        error: `Category renamed, but linked expenses could not be updated: ${expenseSync.error.message}`,
+        error: `Category renamed, but archived expenses could not be updated: ${expenseSync.error.message}`,
       };
     }
 
@@ -223,17 +235,33 @@ export async function deleteCategory(formData: FormData) {
     redirect(categoriesUrl({ error: "That category could not be found." }));
   }
 
-  // 1. Move linked expenses to the built-in Other category.
-  const { error: expenseError } = await supabase
-    .from("expenses")
-    .update({ category: "Other", category_id: null })
-    .eq("category_id", id)
-    .eq("user_id", user.id);
+  // 1. Move linked transactions to the built-in Other category, and keep the
+  // archived expenses table consistent too.
+  const [transactionMove, expenseMove] = await Promise.all([
+    supabase
+      .from("transactions")
+      .update({ category: "Other", category_id: null })
+      .eq("category_id", id)
+      .eq("user_id", user.id),
+    supabase
+      .from("expenses")
+      .update({ category: "Other", category_id: null })
+      .eq("category_id", id)
+      .eq("user_id", user.id),
+  ]);
 
-  if (expenseError) {
+  if (transactionMove.error) {
     redirect(
       categoriesUrl({
-        error: `Could not move linked expenses: ${expenseError.message}`,
+        error: `Could not move linked transactions: ${transactionMove.error.message}`,
+      }),
+    );
+  }
+
+  if (expenseMove.error) {
+    redirect(
+      categoriesUrl({
+        error: `Could not move archived expenses: ${expenseMove.error.message}`,
       }),
     );
   }

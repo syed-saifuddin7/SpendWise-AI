@@ -70,7 +70,7 @@ export function CategoriesView({ data }: { data: CategoriesData }) {
           note={
             data.monthTotal > 0
               ? "across all categories"
-              : "No expenses recorded yet"
+              : "No spending recorded yet"
           }
           good={data.monthTotal > 0}
           icon={<Sparkles size={17} />}
@@ -83,7 +83,7 @@ export function CategoriesView({ data }: { data: CategoriesData }) {
           note={
             data.items[0]?.monthSpent
               ? `${Math.round(data.items[0].share)}% of spending`
-              : "Add an expense to see it"
+              : "Add a transaction to see it"
           }
           icon={<Tags size={17} />}
         />

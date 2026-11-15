@@ -133,7 +133,7 @@ export async function getRecurringData(
         .order("next_run_date", { ascending: true })
         .order("id", { ascending: true }),
       supabase
-        .from("expenses")
+        .from("transactions")
         .select("id, date, recurring_expense_id")
         .eq("user_id", user.id)
         .not("recurring_expense_id", "is", null),
@@ -157,7 +157,7 @@ export async function getRecurringData(
 
   if (expensesResult.error) {
     throw new Error(
-      `Could not load generated expenses: ${expensesResult.error.message}`,
+      `Could not load generated transactions: ${expensesResult.error.message}`,
     );
   }
 

@@ -1,5 +1,6 @@
 import {
   ArrowDownRight,
+  ArrowLeftRight,
   ArrowUpRight,
   MoreHorizontal,
   ReceiptText,
@@ -7,6 +8,7 @@ import {
 
 import { categoryEmoji } from "@/lib/categories";
 import { formatMoney } from "@/lib/finance";
+import type { TransactionType } from "@/lib/types";
 
 import { money, txns } from "./data";
 
@@ -122,6 +124,7 @@ export type DashboardTransaction = {
   category: string;
   date: string;
   amount: number | string;
+  type?: TransactionType;
 };
 
 function formatDay(date: string) {
@@ -148,9 +151,9 @@ export function TransactionRows({
     return (
       <div className="py-10 text-center">
         <ReceiptText className="mx-auto sw-muted" size={28} />
-        <p className="mt-3 font-semibold">No expenses yet</p>
+        <p className="mt-3 font-semibold">No transactions yet</p>
         <p className="mt-1 text-sm sw-muted">
-          Expenses you add in SpendWise will show up here.
+          Income, expenses and transfers you add in SpendWise will show up here.
         </p>
       </div>
     );
@@ -158,25 +161,53 @@ export function TransactionRows({
 
   return (
     <div className="sw-stagger divide-y" style={{ borderColor: "var(--line)" }}>
-      {transactions.map((transaction) => (
-        <div key={transaction.id} className="flex items-center gap-3 py-3.5">
-          <div
-            className="grid size-10 place-items-center rounded-xl text-lg"
-            style={{ background: "var(--bg)" }}
-          >
-            {categoryEmoji(transaction.category)}
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="truncate font-semibold">{transaction.name}</div>
-            <div className="text-xs sw-muted">
-              {transaction.category || "Other"} · {formatDay(transaction.date)}
+      {transactions.map((transaction) => {
+        const type = transaction.type ?? "expense";
+        const amount = Number(transaction.amount) || 0;
+
+        return (
+          <div key={transaction.id} className="flex items-center gap-3 py-3.5">
+            <div
+              className="grid size-10 place-items-center rounded-xl text-lg"
+              style={{ background: "var(--bg)" }}
+            >
+              {type === "transfer" ? (
+                <ArrowLeftRight size={17} style={{ color: "var(--ai)" }} />
+              ) : (
+                categoryEmoji(transaction.category)
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate font-semibold">{transaction.name}</div>
+              <div className="text-xs sw-muted">
+                {type === "transfer" ? "Transfer" : transaction.category || "Other"}{" "}
+                · {formatDay(transaction.date)}
+              </div>
+            </div>
+            <div
+              className="flex items-center gap-1 text-right font-bold"
+              style={
+                type === "income"
+                  ? { color: "var(--brand)" }
+                  : type === "transfer"
+                    ? { color: "var(--muted)" }
+                    : undefined
+              }
+            >
+              {type === "income" ? (
+                <ArrowDownRight size={14} />
+              ) : type === "expense" ? (
+                <ArrowUpRight size={14} />
+              ) : null}
+              {type === "income"
+                ? `+${formatMoney(amount, currency)}`
+                : type === "expense"
+                  ? `−${formatMoney(amount, currency)}`
+                  : formatMoney(amount, currency)}
             </div>
           </div>
-          <div className="text-right font-bold">
-            {formatMoney(-(Number(transaction.amount) || 0), currency)}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

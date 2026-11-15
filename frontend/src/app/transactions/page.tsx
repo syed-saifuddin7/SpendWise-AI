@@ -1,7 +1,7 @@
 import { Shell } from "@/components/spendwise/shell";
 import { getTransactionsData } from "@/lib/data/transactions";
 
-import { ExpenseDialog } from "./expense-dialog";
+import { TransactionDialog } from "./transaction-dialog";
 import { TransactionsView } from "./transactions-view";
 
 type TransactionsPageProps = {
@@ -12,27 +12,31 @@ export default async function Page({ searchParams }: TransactionsPageProps) {
   const params = await searchParams;
   const data = await getTransactionsData(params);
 
-  const dialogOpen = data.addMode || Boolean(data.editingExpense);
+  const dialogOpen = data.addMode || Boolean(data.editingTransaction);
 
   const closeParams = new URLSearchParams({ month: data.monthKey });
-  if (data.categoryFilter) closeParams.set("category", data.categoryFilter);
   if (data.query) closeParams.set("q", data.query);
+  if (data.categoryFilter) closeParams.set("category", data.categoryFilter);
+  if (data.typeFilter) closeParams.set("type", data.typeFilter);
+  if (data.walletFilter) closeParams.set("wallet", String(data.walletFilter));
   const closeHref = `/transactions?${closeParams.toString()}`;
 
   return (
     <Shell
       title="Transactions"
-      subtitle="Every expense, in one place."
+      subtitle="Income, expenses and transfers in one honest ledger."
       user={{ name: data.user.name, email: data.user.email }}
     >
       <TransactionsView data={data} />
 
       {dialogOpen && (
-        <ExpenseDialog
+        <TransactionDialog
           categories={data.categories}
+          wallets={data.wallets}
           currency={data.currency}
           closeHref={closeHref}
-          expense={data.addMode ? null : data.editingExpense}
+          transaction={data.addMode ? null : data.editingTransaction}
+          initialType={data.addKind}
         />
       )}
     </Shell>

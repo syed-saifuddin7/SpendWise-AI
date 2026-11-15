@@ -7,6 +7,7 @@ import { useState } from "react";
 import {
   LayoutDashboard,
   ArrowLeftRight,
+  Wallet,
   WalletCards,
   ChartNoAxesCombined,
   CalendarDays,
@@ -31,6 +32,7 @@ import {
 const nav = [
   ["Dashboard", "/dashboard", LayoutDashboard],
   ["Transactions", "/transactions", ArrowLeftRight],
+  ["Wallets", "/wallets", Wallet],
   ["Budgets", "/budgets", WalletCards],
   ["Goals", "/goals", Target],
   ["Bills & Subscriptions", "/bills", CreditCard],
@@ -89,8 +91,8 @@ export function Shell({
 
             return (
               <div key={href}>
-                {index === 5 && <SectionLabel>Plan</SectionLabel>}
-                {index === 9 && <SectionLabel>Tools</SectionLabel>}
+                {index === 6 && <SectionLabel>Plan</SectionLabel>}
+                {index === 10 && <SectionLabel>Tools</SectionLabel>}
                 <Link
                   href={href}
                   className={`sw-nav-link mb-1 flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium ${
@@ -336,9 +338,9 @@ export function Shell({
 
             <div className="grid grid-cols-2 gap-3 p-5">
               {[
-                ["Expense", "💸", "/transactions"],
-                ["Income", "💵", "/transactions"],
-                ["Transfer", "↔️", "/transactions"],
+                ["Expense", "💸", "/transactions?add=1&kind=expense"],
+                ["Income", "💵", "/transactions?add=1&kind=income"],
+                ["Transfer", "↔️", "/transactions?add=1&kind=transfer"],
                 ["Scan Receipt", "🧾", "/import"],
                 ["Reports", "📄", "/reports"],
                 ["Ask AI", "✨", "/ai"],

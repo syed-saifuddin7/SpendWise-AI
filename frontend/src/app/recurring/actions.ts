@@ -254,9 +254,9 @@ export async function deleteRecurring(formData: FormData) {
     redirect("/login?next=%2Frecurring");
   }
 
-  // `expenses.recurring_expense_id` cascades on delete, which would erase the
-  // expense history a plan already produced. Detach those rows first so the
-  // delete only removes the schedule.
+  // Generated transactions detach automatically (`ON DELETE SET NULL`), but the
+  // archived `expenses` table cascades on delete. Detach those rows first so
+  // the delete only removes the schedule.
   const { error: detachError } = await supabase
     .from("expenses")
     .update({ recurring_expense_id: null })
@@ -291,8 +291,9 @@ export async function deleteRecurring(formData: FormData) {
 
 /**
  * Mirrors `process_due_recurring_expenses` in `cloud_db.py`: create one expense
- * per due item for its `next_run_date`, then advance that item one interval.
- * Duplicate protection on (recurring_expense_id, date) keeps repeat clicks safe.
+ * transaction per due item for its `next_run_date`, then advance that item one
+ * interval. Duplicate protection on (recurring_expense_id, date) keeps repeat
+ * clicks safe.
  */
 export async function processDueRecurring() {
   const supabase = await createClient();
@@ -326,11 +327,31 @@ export async function processDueRecurring() {
 
   let created = 0;
 
+  // Recurring plans do not pin a wallet yet, so generated expenses land in the
+  // user's first active wallet. Plans still work without one (wallet_id null).
+  const { data: walletRows, error: walletError } = await supabase
+    .from("wallets")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("is_active", true)
+    .order("id", { ascending: true })
+    .limit(1);
+
+  if (walletError) {
+    redirect(
+      recurringUrl({
+        error: `Could not load your wallets: ${walletError.message}`,
+      }),
+    );
+  }
+
+  const walletId = walletRows?.[0]?.id ? Number(walletRows[0].id) : null;
+
   for (const item of dueItems ?? []) {
     const nextRunDate = String(item.next_run_date);
 
     const { data: existing, error: existingError } = await supabase
-      .from("expenses")
+      .from("transactions")
       .select("id")
       .eq("user_id", user.id)
       .eq("recurring_expense_id", item.id)
@@ -340,27 +361,31 @@ export async function processDueRecurring() {
     if (existingError) {
       redirect(
         recurringUrl({
-          error: `Could not check generated expenses: ${existingError.message}`,
+          error: `Could not check generated transactions: ${existingError.message}`,
         }),
       );
     }
 
     if (!existing?.length) {
-      const { error: insertError } = await supabase.from("expenses").insert({
-        user_id: user.id,
-        name: item.name,
-        amount: item.amount,
-        category: item.category,
-        category_id: item.category_id ?? null,
-        description: item.description ?? "",
-        date: nextRunDate,
-        recurring_expense_id: item.id,
-      });
+      const { error: insertError } = await supabase
+        .from("transactions")
+        .insert({
+          user_id: user.id,
+          type: "expense",
+          name: item.name,
+          amount: item.amount,
+          category: item.category,
+          category_id: item.category_id ?? null,
+          description: item.description ?? "",
+          date: nextRunDate,
+          wallet_id: walletId,
+          recurring_expense_id: item.id,
+        });
 
       if (insertError) {
         redirect(
           recurringUrl({
-            error: `Could not generate an expense: ${insertError.message}`,
+            error: `Could not generate a transaction: ${insertError.message}`,
           }),
         );
       }

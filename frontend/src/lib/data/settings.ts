@@ -30,11 +30,12 @@ export type SettingsData = {
   currentMonthLabel: string;
   currentBudget: number;
   counts: {
-    expenses: number;
+    transactions: number;
+    wallets: number;
     categories: number;
     recurring: number;
   };
-  earliestExpenseDate: string | null;
+  earliestTransactionDate: string | null;
   memberSince: string | null;
   notice: SettingsNotice | null;
 };
@@ -64,10 +65,11 @@ export async function getSettingsData(
   const [
     settingsResult,
     budgetResult,
-    expenseCountResult,
+    transactionCountResult,
+    walletCountResult,
     categoryCountResult,
     recurringCountResult,
-    earliestExpenseResult,
+    earliestTransactionResult,
   ] = await Promise.all([
     supabase
       .from("user_settings")
@@ -83,7 +85,11 @@ export async function getSettingsData(
       .limit(1)
       .maybeSingle(),
     supabase
-      .from("expenses")
+      .from("transactions")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id),
+    supabase
+      .from("wallets")
       .select("id", { count: "exact", head: true })
       .eq("user_id", user.id),
     supabase
@@ -95,7 +101,7 @@ export async function getSettingsData(
       .select("id", { count: "exact", head: true })
       .eq("user_id", user.id),
     supabase
-      .from("expenses")
+      .from("transactions")
       .select("date")
       .eq("user_id", user.id)
       .order("date", { ascending: true })
@@ -111,9 +117,15 @@ export async function getSettingsData(
     throw new Error(`Could not load budget: ${budgetResult.error.message}`);
   }
 
-  if (expenseCountResult.error) {
+  if (transactionCountResult.error) {
     throw new Error(
-      `Could not count expenses: ${expenseCountResult.error.message}`,
+      `Could not count transactions: ${transactionCountResult.error.message}`,
+    );
+  }
+
+  if (walletCountResult.error) {
+    throw new Error(
+      `Could not count wallets: ${walletCountResult.error.message}`,
     );
   }
 
@@ -129,9 +141,9 @@ export async function getSettingsData(
     );
   }
 
-  if (earliestExpenseResult.error) {
+  if (earliestTransactionResult.error) {
     throw new Error(
-      `Could not load expense history: ${earliestExpenseResult.error.message}`,
+      `Could not load transaction history: ${earliestTransactionResult.error.message}`,
     );
   }
 
@@ -176,12 +188,13 @@ export async function getSettingsData(
     currentMonthLabel: monthLabel(monthKey),
     currentBudget: Number(budgetResult.data?.amount ?? 0) || 0,
     counts: {
-      expenses: expenseCountResult.count ?? 0,
+      transactions: transactionCountResult.count ?? 0,
+      wallets: walletCountResult.count ?? 0,
       categories: categoryCountResult.count ?? 0,
       recurring: recurringCountResult.count ?? 0,
     },
-    earliestExpenseDate: earliestExpenseResult.data?.date
-      ? String(earliestExpenseResult.data.date)
+    earliestTransactionDate: earliestTransactionResult.data?.date
+      ? String(earliestTransactionResult.data.date)
       : null,
     memberSince: user.created_at ? String(user.created_at) : null,
     notice,

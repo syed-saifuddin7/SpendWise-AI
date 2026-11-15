@@ -8,9 +8,7 @@ import {
   type FinancialHealth,
 } from "@/lib/finance";
 import { createClient } from "@/lib/supabase/server";
-import type { ExpenseRecord } from "@/lib/types";
-
-export type { ExpenseRecord };
+import type { TransactionRecord } from "@/lib/types";
 
 export type CategoryTotal = {
   name: string;
@@ -30,10 +28,15 @@ export type DashboardData = {
   dayOfMonth: number;
   daysInMonth: number;
   daysElapsed: number;
-  expenses: ExpenseRecord[];
-  recent: ExpenseRecord[];
+  expenses: TransactionRecord[];
+  recent: TransactionRecord[];
   totalSpent: number;
+  monthlyIncome: number;
+  netCashFlow: number;
+  savingsRate: number | null;
   transactionCount: number;
+  expenseCount: number;
+  incomeCount: number;
   dailyAverage: number;
   budget: number;
   budgetLeft: number;
@@ -76,36 +79,43 @@ export async function getDashboardData(): Promise<DashboardData> {
     nextMonth.getMonth() + 1,
   )}-01`;
 
-  const [expensesResult, budgetResult, settingsResult, categoryBudgetsResult] =
-    await Promise.all([
-      supabase
-        .from("expenses")
-        .select("*")
-        .eq("user_id", user.id)
-        .gte("date", monthStart)
-        .lt("date", nextMonthStart)
-        .order("date", { ascending: false }),
-      supabase
-        .from("budgets")
-        .select("amount")
-        .eq("user_id", user.id)
-        .eq("month", monthKey)
-        .limit(1),
-      supabase
-        .from("user_settings")
-        .select("display_name, currency, default_monthly_budget")
-        .eq("user_id", user.id)
-        .limit(1),
-      supabase
-        .from("category_budgets")
-        .select("category_name, amount")
-        .eq("user_id", user.id)
-        .eq("month", monthKey)
-        .order("category_name"),
-    ]);
+  const [
+    transactionsResult,
+    budgetResult,
+    settingsResult,
+    categoryBudgetsResult,
+  ] = await Promise.all([
+    supabase
+      .from("transactions")
+      .select("*")
+      .eq("user_id", user.id)
+      .gte("date", monthStart)
+      .lt("date", nextMonthStart)
+      .order("date", { ascending: false })
+      .order("id", { ascending: false }),
+    supabase
+      .from("budgets")
+      .select("amount")
+      .eq("user_id", user.id)
+      .eq("month", monthKey)
+      .limit(1),
+    supabase
+      .from("user_settings")
+      .select("display_name, currency, default_monthly_budget")
+      .eq("user_id", user.id)
+      .limit(1),
+    supabase
+      .from("category_budgets")
+      .select("category_name, amount")
+      .eq("user_id", user.id)
+      .eq("month", monthKey)
+      .order("category_name"),
+  ]);
 
-  if (expensesResult.error) {
-    throw new Error(`Could not load expenses: ${expensesResult.error.message}`);
+  if (transactionsResult.error) {
+    throw new Error(
+      `Could not load transactions: ${transactionsResult.error.message}`,
+    );
   }
 
   if (budgetResult.error) {
@@ -122,7 +132,10 @@ export async function getDashboardData(): Promise<DashboardData> {
     );
   }
 
-  const expenses = (expensesResult.data ?? []) as ExpenseRecord[];
+  const transactions = (transactionsResult.data ?? []) as TransactionRecord[];
+  const expenses = transactions.filter(
+    (transaction) => transaction.type === "expense",
+  );
   const settings = settingsResult.data?.[0];
   const currency = (settings?.currency as string | null) ?? "INR";
 
@@ -135,6 +148,10 @@ export async function getDashboardData(): Promise<DashboardData> {
     (total, expense) => total + (Number(expense.amount) || 0),
     0,
   );
+  const monthlyIncome = transactions
+    .filter((transaction) => transaction.type === "income")
+    .reduce((total, transaction) => total + (Number(transaction.amount) || 0), 0);
+  const netCashFlow = monthlyIncome - totalSpent;
 
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const dayOfMonth = now.getDate();
@@ -207,9 +224,16 @@ export async function getDashboardData(): Promise<DashboardData> {
     daysInMonth,
     daysElapsed,
     expenses,
-    recent: expenses.slice(0, 6),
+    recent: transactions.slice(0, 6),
     totalSpent,
-    transactionCount: expenses.length,
+    monthlyIncome,
+    netCashFlow,
+    savingsRate: monthlyIncome > 0 ? (netCashFlow / monthlyIncome) * 100 : null,
+    transactionCount: transactions.length,
+    expenseCount: expenses.length,
+    incomeCount: transactions.filter(
+      (transaction) => transaction.type === "income",
+    ).length,
     dailyAverage: daysElapsed > 0 ? totalSpent / daysElapsed : 0,
     budget: monthlyBudget,
     budgetLeft,

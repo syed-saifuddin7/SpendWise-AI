@@ -126,9 +126,10 @@ export async function getBudgetsData(
       .eq("month", monthKey)
       .order("category_name"),
     supabase
-      .from("expenses")
+      .from("transactions")
       .select("category, amount, date")
       .eq("user_id", user.id)
+      .eq("type", "expense")
       .gte("date", start)
       .lt("date", nextStart),
   ]);
@@ -154,7 +155,9 @@ export async function getBudgetsData(
   }
 
   if (expensesResult.error) {
-    throw new Error(`Could not load expenses: ${expensesResult.error.message}`);
+    throw new Error(
+      `Could not load transactions: ${expensesResult.error.message}`,
+    );
   }
 
   const settings = settingsResult.data?.[0];

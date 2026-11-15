@@ -1,4 +1,5 @@
 import {
+  ArrowLeftRight,
   Bot,
   Database,
   Download,
@@ -140,10 +141,15 @@ export function SettingsView({ data }: { data: SettingsData }) {
           title="Data & account"
           action={<Database size={17} className="sw-muted" />}
         >
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid gap-2 sm:grid-cols-2">
             <StatTile
-              label="Expenses"
-              value={String(data.counts.expenses)}
+              label="Transactions"
+              value={String(data.counts.transactions)}
+              icon={<ArrowLeftRight size={14} />}
+            />
+            <StatTile
+              label="Wallets"
+              value={String(data.counts.wallets)}
               icon={<WalletCards size={14} />}
             />
             <StatTile
@@ -170,8 +176,8 @@ export function SettingsView({ data }: { data: SettingsData }) {
             <span className="text-xs font-normal sw-muted">JSON</span>
           </a>
           <p className="mt-1 text-xs sw-muted">
-            A user-scoped snapshot of expenses, budgets, category budgets,
-            categories, recurring plans and settings.
+            A user-scoped snapshot of transactions, wallets, budgets, category
+            budgets, categories, recurring plans and settings.
           </p>
 
           <div
@@ -182,10 +188,10 @@ export function SettingsView({ data }: { data: SettingsData }) {
               Account email: <b style={{ color: "var(--text)" }}>{data.user.email}</b>
             </p>
             {memberSince && <p className="mt-1">Member since {memberSince}</p>}
-            {data.earliestExpenseDate && (
+            {data.earliestTransactionDate && (
               <p className="mt-1">
-                Tracking expenses since{" "}
-                {formatExpenseDate(data.earliestExpenseDate)}
+                Tracking transactions since{" "}
+                {formatExpenseDate(data.earliestTransactionDate)}
               </p>
             )}
           </div>

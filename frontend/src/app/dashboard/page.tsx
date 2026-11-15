@@ -1,6 +1,6 @@
 import {
-  PiggyBank,
-  ReceiptText,
+  ArrowDownRight,
+  ArrowLeftRight,
   Sparkles,
   TrendingDown,
   Wallet,
@@ -46,7 +46,7 @@ export default async function Page() {
           )} left in your budget.`
         : "Set a monthly budget to unlock budget tracking and your health score.";
 
-  const insight = data.transactionCount
+  const insight = data.expenseCount
     ? `${
         topCategory?.name ?? "Your top category"
       } accounts for ${Math.round(
@@ -73,24 +73,29 @@ export default async function Page() {
         <Metric
           label="Spent this month"
           value={formatMoney(data.totalSpent, data.currency)}
-          note={`${data.transactionCount} transaction${
-            data.transactionCount === 1 ? "" : "s"
+          note={`${data.expenseCount} expense${
+            data.expenseCount === 1 ? "" : "s"
           }`}
           icon={<Wallet size={17} />}
         />
         <Metric
-          label="Daily average"
-          value={formatMoney(data.dailyAverage, data.currency)}
-          note={`over ${data.daysElapsed} day${
-            data.daysElapsed === 1 ? "" : "s"
+          label="Income this month"
+          value={formatMoney(data.monthlyIncome, data.currency)}
+          note={`${data.incomeCount} income entr${
+            data.incomeCount === 1 ? "y" : "ies"
           }`}
-          icon={<PiggyBank size={17} />}
+          icon={<ArrowDownRight size={17} />}
         />
         <Metric
-          label="Transactions"
-          value={String(data.transactionCount)}
-          note={`${data.daysInMonth - data.daysElapsed} days left this month`}
-          icon={<ReceiptText size={17} />}
+          label="Net cash flow"
+          value={formatMoney(data.netCashFlow, data.currency)}
+          note={
+            data.savingsRate === null
+              ? "income minus spending"
+              : `${Math.round(data.savingsRate)}% of income kept`
+          }
+          good={data.netCashFlow >= 0}
+          icon={<ArrowLeftRight size={17} />}
         />
         <Metric
           label="Budget remaining"
@@ -122,7 +127,7 @@ export default async function Page() {
           </div>
           <div className="mt-2 text-xs sw-muted">
             {data.monthLabel} · {formatMoney(data.totalSpent, data.currency)}{" "}
-            spent so far
+            spent · {formatMoney(data.dailyAverage, data.currency)}/day
           </div>
         </Section>
 

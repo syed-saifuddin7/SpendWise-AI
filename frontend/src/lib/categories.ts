@@ -10,8 +10,16 @@ const CATEGORY_EMOJI: Record<string, string> = {
   Health: "🩺",
   Education: "📚",
   Utilities: "💡",
+  Salary: "💼",
+  Freelance: "🧑‍💻",
+  Business: "🏢",
+  Interest: "🏦",
+  Gift: "🎁",
+  Transfer: "🔁",
   Other: "💸",
 };
+
+export const TRANSFER_CATEGORY_NAME = "Transfer";
 
 export const DEFAULT_CATEGORY_NAMES = [
   "Food",
@@ -25,6 +33,15 @@ export const DEFAULT_CATEGORY_NAMES = [
   "Health",
   "Education",
   "Utilities",
+  "Other",
+];
+
+export const INCOME_CATEGORY_NAMES = [
+  "Salary",
+  "Freelance",
+  "Business",
+  "Interest",
+  "Gift",
   "Other",
 ];
 

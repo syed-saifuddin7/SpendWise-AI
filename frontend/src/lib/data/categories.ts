@@ -73,9 +73,10 @@ export async function getCategoriesData(
       .eq("user_id", user.id)
       .order("name"),
     supabase
-      .from("expenses")
+      .from("transactions")
       .select("category, amount, date")
-      .eq("user_id", user.id),
+      .eq("user_id", user.id)
+      .eq("type", "expense"),
   ]);
 
   if (settingsResult.error) {
@@ -89,7 +90,9 @@ export async function getCategoriesData(
   }
 
   if (expensesResult.error) {
-    throw new Error(`Could not load expenses: ${expensesResult.error.message}`);
+    throw new Error(
+      `Could not load transactions: ${expensesResult.error.message}`,
+    );
   }
 
   const settings = settingsResult.data?.[0];
@@ -227,7 +230,7 @@ export async function getCategoriesData(
           ? {
               type: "success" as const,
               message:
-                "Category deleted. Linked expenses moved to Other and its budgets were removed.",
+                "Category deleted. Linked transactions moved to Other and its budgets were removed.",
             }
           : null;
 

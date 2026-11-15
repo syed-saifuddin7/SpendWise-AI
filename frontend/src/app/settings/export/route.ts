@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
 const EXPORT_TABLES = [
+  "transactions",
+  "wallets",
   "expenses",
   "budgets",
   "category_budgets",
